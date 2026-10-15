@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChartLab</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><path d='M3 11l3-4 3 2 4-6' stroke='%2326a69a' stroke-width='2' fill='none'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">Chart<b>Lab</b></div>
+    <input id="symbol" list="symbols" spellcheck="false" title="Symbol (press / to search)" autocomplete="off">
+    <datalist id="symbols"></datalist>
+    <div id="tfs" class="seg" title="Timeframe (keys 1–7)"></div>
+    <button id="btn-ctype" class="tb" title="Chart type: normal candles ↔ Heikin Ashi (Alt+K). Only the drawing changes — orders still fill at the real price.">🕯 Candles</button>
+    <div id="layouts" class="seg" title="Split screen: each window has its own symbol, timeframe and indicators. Click a window to select it.">
+      <button data-layout="1" title="One chart">▢</button><button data-layout="2v" title="Two charts side by side">◫</button>
+      <button data-layout="2h" title="Two charts stacked">⊟</button><button data-layout="4" title="Four charts">⊞</button>
+    </div>
+    <button id="btn-link" class="tb" title="Link windows: crosshair and time scrolling move together">🔗</button>
+    <button id="btn-ind" class="tb">ƒx Indicators</button>
+    <button id="btn-replay" class="tb" title="Bar replay — practise on past data">⏪ Replay</button>
+    <button id="btn-sync" class="tb" title="Fetch the latest data (Angel One / Yahoo)">⟳ Sync</button>
+    <button id="btn-stats" class="tb" title="Your practice statistics and trade review">📊 Stats</button>
+    <button id="btn-lab" class="tb" title="Harmonic practice: check my drawing, trade-plan drill, flashcards, pattern library, daily drill, stats">🎓 Harmonics</button>
+    <button id="btn-coach" class="tb" title="Pattern coach: ChartLab marks harmonic patterns itself and explains them (challenge mode in the ⋀⋁ menu)">🤖 Coach</button>
+    <div class="grow"></div>
+    <span id="status" class="status">…</span>
+    <button id="btn-practice" class="tb" title="Show / hide the side panel">☰ Panel</button>
+    <button id="btn-help" class="tb" title="Shortcuts & help">?</button>
+  </header>
+
+  <main>
+    <nav id="tools" aria-label="Drawing tools"></nav>
+    <section id="chart-wrap">
+      <div id="panels" class="layout-1"></div>
+      <div id="draw-props" hidden>
+        <label>Color <input type="color" class="dp-color"></label>
+        <label>Width <input type="number" class="dp-width" min="1" max="6" step="1"></label>
+        <label>Text <input type="text" class="dp-text" maxlength="200"></label>
+        <label>R:R 1: <input type="number" class="dp-ratio" min="0.5" max="10" step="0.5"></label>
+        <label title="Number of price rows in the volume profile">Rows <input type="number" class="dp-rows" min="5" max="200" step="1"></label>
+        <label title="Notify me when price crosses this line">🔔 Alert <input type="checkbox" class="dp-alert"></label>
+        <button class="dp-check" title="Check my drawing: compare with the real swing points and name the pattern" hidden>✔ Check</button>
+        <button class="dp-del" title="Delete (Del)">🗑</button>
+      </div>
+      <div id="lab" hidden>
+        <div class="co-top"><b class="lb-title">🎓 Harmonic practice</b><button class="lb-close" title="Close (back to live data)">✕</button></div>
+        <div class="lb-drill small"></div>
+        <div class="lb-body"></div>
+      </div>
+      <div id="ratio-sheet" hidden></div>
+      <div id="coach" hidden>
+        <div class="co-top"><b class="co-title">🤖 Pattern coach</b><button class="co-close" title="Close">✕</button></div>
+        <div class="co-study">
+          <label title="Study a date: every pattern completed on that day">📅 <input type="date" class="co-date"></label>
+          <button class="co-days" title="Find the days with the most pattern formations">🔎 Busy days</button>
+          <button class="co-prev" title="Previous pattern">◀</button><button class="co-next-p" title="Next pattern">▶</button>
+        </div>
+        <div class="co-body"></div>
+      </div>
+      <div id="replay-bar" hidden>
+        <select class="rp-mode" title="Step size">
+          <option value="minute">1 minute steps</option><option value="bar">1 bar steps</option>
+        </select>
+        <input type="date" class="rp-date" title="Start the replay at this day's open">
+        <button class="rp-random" title="Random day">🎲</button>
+        <button class="rp-blind" title="Blind practice: random day with the date hidden">🙈 Blind</button>
+        <button class="rp-back" title="Back one step (←, Shift+← = 10)">⏮</button>
+        <button class="rp-play" title="Play / pause (Space)">▶</button>
+        <button class="rp-fwd" title="Forward one step (→, Shift+→ = 10)">⏭</button>
+        <button class="rp-close" title="Jump to the close of the current candle (↓)">⇥</button>
+        <select class="rp-speed" title="Steps per second">
+          <option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="10">10×</option><option value="20">20×</option>
+        </select>
+        <span class="rp-status"></span>
+        <button class="rp-reveal" title="Show the date of this blind day and your result">Reveal</button>
+        <button class="rp-exit" title="Exit replay">✕ Exit</button>
+      </div>
+    </section>
+
+    <aside id="practice" data-tab="practice">
+      <div class="seg side-tabs"><button data-tab="practice">Practice</button><button data-tab="news">📰 News</button><button data-tab="chain" title="Live option chain (Angel One)">⛓ Options</button></div>
+
+      <div id="tab-practice" class="side-tab">
+        <div class="seg pt-inst" title="What you trade">
+          <button data-inst="index">Index</button><button data-inst="option">ATM Option</button>
+        </div>
+        <div class="pt-grid">
+          <label>Qty <input type="number" class="pt-qty" min="1" value="65"></label>
+          <label><span class="lbl-sl">SL pts</span> <input type="number" class="pt-sl" min="0" value="10"></label>
+          <label><span class="lbl-tp">Target pts</span> <input type="number" class="pt-tp" min="0" value="20"></label>
+          <label>Slippage pts/side <input type="number" class="pt-slip" min="0" step="0.5" value="1"></label>
+          <label>Setup <select class="pt-tag"></select></label>
+          <label>Cost ₹/trade <input type="number" class="pt-cost" min="0" value="40"></label>
+        </div>
+        <input type="text" class="pt-note-in" maxlength="200" placeholder="Why this trade? (saved in the journal)">
+        <div class="pt-btns">
+          <button class="pt-buy" title="Shift+B">BUY</button>
+          <button class="pt-sell" title="Shift+S">SELL</button>
+          <button class="pt-close" title="Shift+C">Close</button>
+        </div>
+        <div class="pt-pos"></div>
+        <div class="pt-stats"></div>
+        <div class="pt-note dim"></div>
+        <div class="pt-trades"></div>
+        <div class="pt-foot"><button class="pt-rules" title="Your discipline rules">🛡 Rules</button><button class="pt-journal">📊 Stats</button><button class="pt-reset">Reset</button></div>
+      </div>
+
+      <div id="tab-news" class="side-tab">
+        <input type="search" class="nw-q" placeholder="Filter headlines (e.g. RBI, crude, Fed)">
+        <div class="nw-bar">
+          <label title="Mark candles that had news (📰 = headlines in that candle; with a keyword typed, only matching ones)"><input type="checkbox" class="nw-chart"> on chart</label>
+          <button class="nw-impact" title="How did the market move after headlines with a keyword?">📈 Impact</button>
+          <button class="nw-history" title="Download past headlines for a date range">⬇ History</button>
+        </div>
+        <div class="nw-status dim small"></div>
+        <div class="nw-list"></div>
+        <div class="dim small">Live: Economic Times · Business Standard · Mint (every 2 min). Past days: GDELT news archive. In replay you only see headlines published before the replay clock.</div>
+      </div>
+
+      <div id="tab-chain" class="side-tab">
+        <div class="ch-bar-top">
+          <label>Expiry <select class="ch-exp"></select></label>
+          <label>Strikes <select class="ch-n"><option value="5">±5</option><option value="8">±8</option><option value="10">±10</option><option value="12">±12</option></select></label>
+        </div>
+        <div class="ch-head small"></div>
+        <div class="ch-body"></div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="pattern-menu" hidden></div>
+  <div id="lab-menu" hidden></div>
+  <div id="toasts"></div>
+
+  <dialog id="dlg-indicators" class="dlg">
+    <form method="dialog" class="dlg-head"><h3>Indicators</h3><button>✕</button></form>
+    <input type="search" placeholder="Search…">
+    <div class="list"></div>
+    <p class="dim small">Add your own: drop a <code>.py</code> file into <code>custom_indicators/</code> — it appears here automatically (see <code>custom_indicators/README.md</code>).</p>
+  </dialog>
+
+  <dialog id="dlg-settings" class="dlg">
+    <form method="dialog" class="dlg-head"><h3></h3><button>✕</button></form>
+    <div class="form"></div>
+    <div class="dlg-foot"><button class="defaults">Defaults</button><button class="apply primary">Apply</button></div>
+  </dialog>
+
+  <dialog id="dlg-rules" class="dlg">
+    <form method="dialog" class="dlg-head"><h3>🛡 Discipline rules</h3><button>✕</button></form>
+    <p class="small dim">Checked on every practice order (replay and live). An order that breaks a rule is blocked, and the attempt is counted in your stats.</p>
+    <div class="form"></div>
+    <div class="dlg-foot"><button class="defaults">Defaults</button><button class="apply primary">Save</button></div>
+  </dialog>
+
+  <dialog id="dlg-stats" class="dlg wide">
+    <form method="dialog" class="dlg-head"><h3>📊 Practice statistics &amp; review</h3><button>✕</button></form>
+    <div class="st-filters">
+      <select class="st-mode"><option value="">Replay + live</option><option value="replay">Replay only</option><option value="live">Live only</option></select>
+      <select class="st-symbol"></select>
+      <select class="st-scope"><option value="all">All sessions</option><option value="session">This session</option></select>
+    </div>
+    <div class="kpis st-kpis"></div>
+    <canvas class="equity"></canvas>
+    <div class="st-rules small down"></div>
+    <div class="st-groups"></div>
+    <div class="table-wrap st-trades"><table><thead><tr><th></th><th>Symbol</th><th>Mode</th><th>Side</th><th>Qty</th><th>Entry time</th><th>Entry</th><th>Exit</th><th>₹ P&amp;L</th><th>Exit</th><th>Setup</th><th>Note</th></tr></thead><tbody></tbody></table></div>
+    <div class="dlg-foot"><button class="st-clear">Clear journal</button></div>
+  </dialog>
+
+  <dialog id="dlg-backtest" class="dlg wide">
+    <form method="dialog" class="dlg-head"><h3>Backtest</h3><button>✕</button></form>
+    <div class="bt-form">
+      <label>From <input type="date" class="bt-from"></label><label>To <input type="date" class="bt-to"></label>
+      <label>Stop <input type="number" class="bt-sl" value="1" step="0.25" min="0.1"></label><label>Target <input type="number" class="bt-tp" value="2" step="0.25" min="0"></label>
+      <label>in <select class="bt-unit"><option value="atr">× ATR(14)</option><option value="pts">points</option></select></label>
+      <label>Max/day <input type="number" class="bt-max" value="2" min="1" max="20"></label>
+      <label>Entries <input type="time" class="bt-efrom" value="09:20"> – <input type="time" class="bt-eto" value="14:30"></label>
+      <label>Side <select class="bt-side"><option value="both">both</option><option value="long">long only</option><option value="short">short only</option></select></label>
+      <label>Qty <input type="number" class="bt-qty" value="65" min="1"></label><label>Cost % <input type="number" class="bt-cost" value="0.02" step="0.005" min="0"></label>
+      <button class="bt-run primary">Run</button>
+    </div>
+    <div class="bt-out"></div>
+  </dialog>
+
+  <dialog id="dlg-impact" class="dlg wide">
+    <form method="dialog" class="dlg-head"><h3>📈 News impact</h3><button>✕</button></form>
+    <div class="bt-form"><input type="search" class="im-q" placeholder="Keyword — e.g. RBI, repo rate, Fed, inflation, crude, election"> <select class="im-symbol"></select> <button class="im-run primary">Analyse</button></div>
+    <p class="small dim">Uses the headlines stored on this PC (live feed + downloaded history). Download more history in the News tab for better results.</p>
+    <div class="im-out"></div>
+  </dialog>
+
+  <dialog id="dlg-library" class="dlg wide">
+    <form method="dialog" class="dlg-head"><h3>📚 Pattern library</h3><button>✕</button></form>
+    <div class="bt-form"><label>From <input type="date" class="lib-from"></label><label>To <input type="date" class="lib-to"></label>
+      <label><select class="lib-pat"></select></label>
+      <label><select class="lib-out-sel"><option value="all">Any outcome</option><option value="worked">Worked ✓</option><option value="failed">Failed ✗</option><option value="open">Open</option></select></label>
+      <label><select class="lib-dir"><option value="all">▲ and ▼</option><option value="bullish">▲ Bullish</option><option value="bearish">▼ Bearish</option></select></label>
+      <button class="lib-run primary">Search</button><span class="dim small">Selected window's symbol and timeframe · up to 3 years.</span></div>
+    <div class="lib-out"></div>
+  </dialog>
+  <dialog id="dlg-hstats" class="dlg wide">
+    <form method="dialog" class="dlg-head"><h3>📈 My harmonic practice</h3><button>✕</button></form>
+    <div class="hs-out"></div>
+  </dialog>
+  <dialog id="dlg-days" class="dlg wide">
+    <form method="dialog" class="dlg-head"><h3>🔎 Busy pattern days</h3><button>✕</button></form>
+    <div class="bt-form"><label>From <input type="date" class="dy-from"></label><label>To <input type="date" class="dy-to"></label><button class="dy-run primary">Scan</button>
+      <span class="dim small">Uses the selected window's symbol and timeframe.</span></div>
+    <div class="dy-out"></div>
+  </dialog>
+
+  <dialog id="dlg-history" class="dlg">
+    <form method="dialog" class="dlg-head"><h3>⬇ Download past headlines</h3><button>✕</button></form>
+    <p class="small dim">From the GDELT news archive (2017 onwards), Indian market headlines, one day every ~7 seconds in the background (≈ 30 min per year).</p>
+    <div class="bt-form"><label>From <input type="date" class="hs-from"></label><label>To <input type="date" class="hs-to"></label></div>
+    <div class="dlg-foot"><button class="apply primary">Download</button></div>
+  </dialog>
+
+  <dialog id="dlg-help" class="dlg">
+    <form method="dialog" class="dlg-head"><h3>Shortcuts &amp; help</h3><button>✕</button></form>
+    <table class="keys">
+      <tr><td>/</td><td>Search symbol</td></tr><tr><td>1 – 7</td><td>Timeframe 1m … 1D</td></tr>
+      <tr><td>Alt+T / H / V / R / F</td><td>Trend line / horizontal / vertical / rectangle / Fibonacci</td></tr>
+      <tr><td>Alt+K</td><td>Chart type: candles ↔ Heikin Ashi</td></tr>
+      <tr><td>Esc</td><td>Cancel tool · Del: delete selected drawing · double-click: edit · 🔔 in the box = line alert</td></tr>
+      <tr><td>Replay: → / ←</td><td>Step forward / back (1 minute or 1 bar, Shift = 10) · ↓ jump to candle close · Space: play/pause</td></tr>
+      <tr><td>Shift+B / S / C</td><td>Practice buy / sell / close · drag the SL / TP lines on the chart to move them</td></tr>
+      <tr><td>Tab</td><td>Select the next chart window (split screen). The toolbar, indicators and drawing tools act on the selected window (blue border).</td></tr>
+    </table>
+    <p class="small dim">Data: Kaggle NSE 1-minute history + Angel One SmartAPI (fill <code>~/.config/angel/creds.env</code>) or Yahoo (delayed) for recent and live bars.
+      In replay every indicator object appears only from the bar it would really have been known — no look-ahead.
+      Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a>.</p>
+  </dialog>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

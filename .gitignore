@@ -1,0 +1,17 @@
+.pylib/
+data/
+__pycache__/
+.pytest_cache/
+node_modules/
+# secrets — never commit (Angel One creds live in ~/.config/angel/creds.env, outside the repo)
+.env
+*.env
+creds*
+*secret*
+*.pem
+*.key
+logs/
+*.log
+# research outputs / third-party documents
+*.pdf
+harm_st_trades.csv
