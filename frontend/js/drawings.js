@@ -1,10 +1,10 @@
 // Drawing tools on the overlay canvas. Anchors are stored as {time, price} so drawings survive zoom, scroll,
 // timeframe changes and reloads (saved per symbol on the server).
-import { TOOL_POINTS, PATTERNS, rangeProfile, fibPrices, rrLevels, hitTest, fmtPrice, fmtTime, isHigh, patternRatios, intersect, timeToLogical } from "./core.js";
+import { TOOL_POINTS, PATTERNS, rangeProfile, fibPrices, fibExtPrices, FIB_EXT_LEVELS, FIB_RET, FIB_EXT, FIB_COLORS, rrLevels, hitTest, fmtPrice, fmtTime, isHigh, patternRatios, intersect, timeToLogical } from "./core.js";
 import { label, badge } from "./chart.js";
 
-const DEFAULT_COLOR = { trend: "#2962ff", ray: "#2962ff", hline: "#f5a623", vline: "#787b86", rect: "#7e57c2", fib: "#90a4ae",
-                        text: "#d1d4dc", measure: "#2962ff", rr: "#26a69a", frvp: "#2962ff", cyclic: "#7e57c2", timecycles: "#7e57c2", sine: "#7e57c2" };
+const DEFAULT_COLOR = { trend: "#2962ff", ray: "#2962ff", hline: "#f5a623", vline: "#787b86", rect: "#7e57c2", fib: "#90a4ae", fibext: "#90a4ae",
+                        text: "#d1d4dc", pen: "#ffeb3b", measure: "#2962ff", rr: "#26a69a", frvp: "#2962ff", cyclic: "#7e57c2", timecycles: "#7e57c2", sine: "#7e57c2" };
 
 export class Drawings {
   constructor(view, { onChange, onSelect, onTool }) {
@@ -16,7 +16,10 @@ export class Drawings {
     this.drag = null;
     this.magnet = true;
     this.stayInTool = false;
-    this.onChange = onChange || (() => {});
+    this.lockAll = false;            // 🔒 all drawings: dragging over them always moves the chart
+    this._save = onChange || (() => {});
+    this.onChange = (items) => { this.commit(); this._save(items); };   // every change is an undo step
+    this.history = []; this.future = []; this._last = "[]";
     this.onSelect = onSelect || (() => {});
     this.onTool = onTool || (() => {});
     view.layers.push((ctx, v, r) => this.render(ctx, r));
@@ -27,7 +30,45 @@ export class Drawings {
     el.addEventListener("dblclick", (e) => { if (this.selected) { this.onSelect(this.selected, true); e.stopPropagation(); } }, true);
   }
 
-  setItems(items) { this.items = items || []; this.selected = null; this.view.requestDraw(); }
+  setItems(items) {
+    this.items = items || []; this.selected = null;
+    this.history = []; this.future = []; this._last = JSON.stringify(this.items);   // new symbol: fresh history
+    this.view.requestDraw();
+  }
+
+  /** remember the drawings as they are now (call after any change); keeps the last 100 steps */
+  commit() {
+    const cur = JSON.stringify(this.items);
+    if (cur === this._last) return;
+    this.history.push(this._last);
+    if (this.history.length > 100) this.history.shift();
+    this.future = [];
+    this._last = cur;
+  }
+
+  _restore(json) {
+    this._last = json;
+    this.items = JSON.parse(json);
+    this.selected = null; this.draft = null; this.drag = null;
+    this._save(this.items);
+    this.view.requestDraw();
+  }
+
+  undo() {
+    if (this.draft) { this.cancel(); return true; }
+    this.commit();
+    if (!this.history.length) return false;
+    this.future.push(this._last);
+    this._restore(this.history.pop());
+    return true;
+  }
+
+  redo() {
+    if (!this.future.length) return false;
+    this.history.push(this._last);
+    this._restore(this.future.pop());
+    return true;
+  }
 
   setTool(t) {
     this.tool = t;
@@ -59,6 +100,16 @@ export class Drawings {
     const p = this.local(e);
     if (!this.inPane(p)) return;
     if (this.lastMeasure && !this.draft) { this.lastMeasure = null; this.view.requestDraw(); }
+    if (this.tool === "pen") {
+      const time = this.view.xToTime(p.x), price = this.view.yToPrice(p.y);
+      if (time == null || price == null) return;
+      e.stopPropagation(); e.preventDefault();
+      this.draft = { id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()), type: "pen",
+                     points: [{ time, price }], color: this.penColor || DEFAULT_COLOR.pen, width: this.penWidth || 2 };
+      this.penLast = p;
+      this.view.requestDraw();
+      return;
+    }
     if (this.tool !== "cursor") {
       const a = this.anchorAt(p);
       if (!a) return;
@@ -77,6 +128,11 @@ export class Drawings {
       return;
     }
     const hit = this.hit(p);
+    if (hit && (hit.item.locked || this.lockAll)) {
+      // locked: let the chart take the drag; a plain click (no movement) still selects it, so it can be unlocked
+      this.lockedClick = { item: hit.item, x: p.x, y: p.y };
+      return;
+    }
     if (hit) {
       e.stopPropagation(); e.preventDefault();
       this.selected = hit.item;
@@ -92,6 +148,16 @@ export class Drawings {
 
   move(e) {
     const p = this.local(e);
+    if (this.draft?.type === "pen") {                          // freehand: a point every 2 px while the button is held
+      if (!(e.buttons & 1)) return;
+      if (Math.hypot(p.x - this.penLast.x, p.y - this.penLast.y) < 2) return;
+      const time = this.view.xToTime(p.x), price = this.view.yToPrice(p.y);
+      if (time == null || price == null) return;
+      this.draft.points.push({ time, price });
+      this.penLast = p;
+      this.view.requestDraw();
+      return;
+    }
     if (this.draft) {
       const a = this.anchorAt(p);
       if (a) { this.draft.points[this.draft.points.length - 1] = a; this.view.requestDraw(); }
@@ -109,10 +175,25 @@ export class Drawings {
       this.view.requestDraw();
       return;
     }
-    if (this.tool === "cursor") this.view.el.classList.toggle("hovering", !!this.hit(p));
+    if (this.tool === "cursor") { const h = this.hit(p); this.view.el.classList.toggle("hovering", !!h && !h.item.locked && !this.lockAll); }
   }
 
-  up() {
+  up(e) {
+    if (this.lockedClick) {
+      const lc = this.lockedClick, p = e ? this.local(e) : null;
+      this.lockedClick = null;
+      if (p && Math.hypot(p.x - lc.x, p.y - lc.y) < 4) { this.selected = lc.item; this.onSelect(lc.item, false); this.view.requestDraw(); }
+    }
+    if (this.draft?.type === "pen") {
+      const d = this.draft;
+      this.draft = null;
+      if (d.points.length >= 2) {
+        this.items.push(d); this.onChange(this.items);
+        this.penColor = d.color; this.penWidth = d.width;
+      }
+      this.view.requestDraw();                               // the pen stays on until Esc / another tool
+      return;
+    }
     if (this.drag) {
       this.fitProfile(this.drag.item);
       this.drag = null;
@@ -193,18 +274,65 @@ export class Drawings {
       }
       case "frvp": this.drawProfile(ctx, it, a, b, r, c); break;
       case "fib": {
-        ctx.lineWidth = 1;
-        const x1 = Math.min(a.x, b.x);
-        for (const { level, price } of fibPrices(it.points[0].price, it.points[1].price)) {
-          const y = v.priceToY(price);
-          if (y == null) continue;
-          ctx.strokeStyle = level === 0.618 || level === 0.5 ? "#f5a623" : c;
-          seg({ x: x1, y }, { x: r.w, y });
-          label(ctx, `${level} (${fmtPrice(price)})`, x1 + 4, y - 7, ctx.strokeStyle, "left", 10);
+        // levels per drawing (default 0, 0.5 … 4: 0 at the end of the drag, 1 at its start, then beyond the start)
+        const p0 = it.points[0].price, p1 = it.points[1].price;
+        const lv = fibPrices(it.reverse ? p1 : p0, it.reverse ? p0 : p1, it.levels || FIB_EXT_LEVELS);
+        const pal = ["#787b86", "#f23645", "#ff9800", "#4caf50", "#089981", "#00bcd4", "#2962ff", "#9c27b0", "#e91e63"];
+        const colOf = (k) => pal[k % pal.length];
+        const x1 = Math.min(a.x, b.x), x2 = it.extend === false ? Math.max(a.x, b.x) : r.w;
+        const ys = lv.map(({ price }) => v.priceToY(price));
+        if (it.fill !== false) {
+          for (let k = 0; k + 1 < lv.length; k++) {
+            if (ys[k] == null || ys[k + 1] == null) continue;
+            ctx.globalAlpha = 0.08;
+            ctx.fillStyle = colOf(k + 1);
+            ctx.fillRect(x1, Math.min(ys[k], ys[k + 1]), x2 - x1, Math.abs(ys[k + 1] - ys[k]));
+          }
+          ctx.globalAlpha = 1;
         }
+        lv.forEach(({ level, price }, k) => {
+          const y = ys[k];
+          if (y == null) return;
+          const col = colOf(k);
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 1;
+          seg({ x: x1, y }, { x: x2, y });
+          label(ctx, `${level} (${fmtPrice(price)})`, x1 + 4, y - 7, col, "left", 10);
+        });
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]); ctx.strokeStyle = c; seg(a, b); ctx.setLineDash([]); break;
+      }
+      case "fibext": {
+        // trend-based Fib extension: 0 at the end of the swing, levels beyond it in the swing direction
+        const lv = fibExtPrices(it.points[0].price, it.points[1].price, it.levels || FIB_EXT_LEVELS);
+        const pal = ["#787b86", "#f23645", "#ff9800", "#4caf50", "#089981", "#00bcd4", "#2962ff", "#9c27b0", "#e91e63"];
+        const x1 = b.x, x2 = it.extend === false ? b.x + 220 : r.w;
+        const ys = lv.map(({ price }) => v.priceToY(price));
+        if (it.fill !== false) {
+          for (let k = 0; k + 1 < lv.length; k++) {
+            if (ys[k] == null || ys[k + 1] == null) continue;
+            ctx.globalAlpha = 0.07; ctx.fillStyle = pal[(k + 1) % pal.length];
+            ctx.fillRect(x1, Math.min(ys[k], ys[k + 1]), x2 - x1, Math.abs(ys[k + 1] - ys[k]));
+          }
+          ctx.globalAlpha = 1;
+        }
+        lv.forEach(({ level, price }, k) => {
+          const y = ys[k];
+          if (y == null) return;
+          const col = pal[k % pal.length];
+          ctx.strokeStyle = col; ctx.lineWidth = 1;
+          seg({ x: x1, y }, { x: x2, y });
+          label(ctx, `${level} (${fmtPrice(price)})`, x1 + 4, y - 7, col, "left", 10);
+        });
         ctx.setLineDash([3, 3]); ctx.strokeStyle = c; seg(a, b); ctx.setLineDash([]); break;
       }
       case "text": label(ctx, it.text || "Text", a.x, a.y, c, "left", 13); break;
+      case "pen": {
+        ctx.lineJoin = "round"; ctx.lineCap = "round";
+        ctx.beginPath(); pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y))); ctx.stroke();
+        ctx.lineJoin = "miter"; ctx.lineCap = "butt";
+        break;
+      }
       case "measure": {
         const p0 = it.points[0], p1 = it.points[1];
         const dp = p1.price - p0.price, pct = (dp / p0.price) * 100;
@@ -231,7 +359,8 @@ export class Drawings {
         if (PATTERNS[it.type]?.cycle) this.drawCycle(ctx, it, pts, r, c);
         else if (PATTERNS[it.type]) { this.drawPattern(ctx, it, pts, r, c); if (selected && this.zoneHook) this.zoneHook(ctx, it, pts); }
     }
-    if (selected) {
+    if (selected && (it.locked || this.lockAll)) label(ctx, "🔒", pts[pts.length - 1].x + 8, pts[pts.length - 1].y - 8, c, "left", 12);
+    else if (selected) {
       ctx.fillStyle = "#fff"; ctx.strokeStyle = c; ctx.lineWidth = 2;
       for (const p of pts) { ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
     }
@@ -370,10 +499,12 @@ export const TOOLS = [
   { id: "vline", icon: "│", title: "Vertical line (Alt+V)" },
   { id: "rect", icon: "▭", title: "Rectangle (Alt+R)" },
   { id: "fib", icon: "𝐅", title: "Fibonacci retracement (Alt+F)" },
+  { id: "fibext", icon: "𝐅↗", title: "Trend-based Fib extension (Alt+E): click the start and the end of the swing — levels 0, 0.5 … 4 continue beyond its end (edit levels in the drawing's settings)" },
   { id: "patterns", icon: "⋀⋁", title: "Patterns: XABCD, Cypher, Head & shoulders, ABCD, Triangle, Three drives, Elliott waves, Cycles", menu: true },
   { id: "frvp", icon: "▤", title: "Fixed range volume profile: click the start and the end of the range" },
   { id: "rr", icon: "⇕", title: "Long/short position: click entry, then stop (target = R × risk)" },
   { id: "measure", icon: "⟷", title: "Measure (Shift+drag style: 2 clicks)" },
   { id: "text", icon: "T", title: "Text note" },
+  { id: "pen", icon: "✎", title: "Pen: hold the mouse button and draw freehand (Alt+P) · Esc to stop" },
 ];
 export { fmtTime };

@@ -128,8 +128,15 @@ class GannDrive(Indicator):
         sym = df.attrs.get("symbol")
         s = symbols.all_symbols().get(sym) if sym else None
         crude = sym in CRUDE
+        if sym == "MCX NATURALGAS":                       # natural gas: the % level variant passed, Gann levels did not
+            from .ng_drive import NGDrive
+            out = NGDrive().compute(df, show_skips=False)           # one grey dot per weak day is too busy
+            out.info = {"note": "Natural gas uses the NG opening-drive rule (open ± 0.33 %, 0.15×ADR exits) — "
+                                "Gann ±1 sits ~3 % away on natural gas and lost since 2022.", **(out.info or {})}
+            return out
         if s is not None and not s.nse_hours and not crude:
-            return Output(info={"note": "Tested on NIFTY (09:15–15:30) and MCX crude only — gold, stocks and BTC lost."})
+            return Output(info={"note": "Tested on NIFTY (09:15–15:30), MCX crude and natural gas only — gold, silver, "
+                                        "stocks and BTC lost."})
         m1 = None
         if sym and not crude:                             # crude: 5m stop-first exits, as in its backtest
             try:

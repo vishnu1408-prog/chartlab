@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>F&amp;O Screener</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><circle cx='7' cy='7' r='4' fill='none' stroke='%2326a69a' stroke-width='1.6'/><path d='M10 10l3.5 3.5' stroke='%2326a69a' stroke-width='1.8'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 12px 16px 40px; }
+    .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    h1 { font-size: 20px; margin: 0 8px 0 0; } .grow { flex: 1; } .dim { color: var(--dim); } a { color: #7aa7ff; }
+    input { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; }
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+    .chips button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 14px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+    .chips button.on { border-color: var(--accent); background: #2962ff33; color: #fff; }
+    .chips button span { color: var(--dim); margin-left: 3px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 0; overflow: auto; max-height: calc(100vh - 170px); }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); cursor: pointer; user-select: none; }
+    th:first-child, td:first-child { text-align: left; } td.b { text-align: left; }
+    .up { color: var(--up); } .down { color: var(--down); }
+    .bar { display: inline-block; width: 60px; height: 6px; background: var(--panel2); border-radius: 3px; position: relative; vertical-align: middle; }
+    .bar i { position: absolute; top: -2px; width: 4px; height: 10px; background: #ffeb3b; border-radius: 2px; }
+    .tag { padding: 1px 7px; border-radius: 9px; font-size: 11px; }
+    .t-LB { background: #26a69a33; color: #6fd2c7; } .t-SB { background: #ef535033; color: #f08f8d; }
+    .t-SC { background: #29b6f633; color: #81d4fa; } .t-LU { background: #ffa72633; color: #ffcc80; }
+    .act a { margin-left: 6px; text-decoration: none; }
+    .rw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; font-size: 13px; }
+    .rw #slider { flex: 1; min-width: 160px; } .rw.on { border-color: #ffb74d; } .rw.on #tlab { color: #ffb74d; }
+    .rw button, .rw select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>🔎 F&amp;O stock screener</h1>
+    <input id="q" placeholder="Search stock…" style="width:140px">
+    <span class="dim" id="at"></span>
+    <span class="grow"></span>
+    <a href="oi.html">📊 OI dashboard</a> <a href="/">← Chart</a>
+  </div>
+  <div class="rw" id="rw"><b>⏪ Rewind</b> <select id="day"><option value="">● Live</option></select>
+    <button id="prev">◀</button><input id="slider" type="range" min="0" max="0" value="0" disabled><button id="next">▶</button>
+    <b id="tlab" class="dim">live</b> <span class="dim" style="font-size:12px">snapshots every 5 minutes</span></div>
+  <div class="chips" id="chips"></div>
+  <div class="card"><table id="t"></table></div>
+  <p class="dim" style="font-size:12px">All NSE F&amp;O stocks, refreshed every minute; saved every 5 minutes for ⏪ rewind. Price change and gap vs the previous close; "day range" = where the price sits
+    between today's low and high; "value ×" = rupees traded so far today vs the 20-day average for this time of day;
+    "fut OI" = near-month futures open interest vs yesterday's close. Buildup: price ↑ OI ↑ long buildup · price ↓ OI ↑ short buildup ·
+    price ↑ OI ↓ short covering · price ↓ OI ↓ long unwinding.</p>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const num = (v, d = 2) => (v == null || !isFinite(v) ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const pc = (v) => (v == null ? "—" : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${num(v)}%</span>`);
+  const TAG = { "Long buildup": "LB", "Short buildup": "SB", "Short covering": "SC", "Long unwinding": "LU" };
+  const F = {
+    "All": () => true, "Gainers": (r) => r.chg > 0, "Losers": (r) => r.chg < 0,
+    "Gap up ≥1%": (r) => r.gap >= 1, "Gap down ≤−1%": (r) => r.gap <= -1,
+    "Near day high": (r) => r.pos >= 0.9, "Near day low": (r) => r.pos != null && r.pos <= 0.1,
+    "Volume surge ≥2×": (r) => r.vol_ratio >= 2,
+    "Long buildup": (r) => r.buildup === "Long buildup", "Short buildup": (r) => r.buildup === "Short buildup",
+    "Short covering": (r) => r.buildup === "Short covering", "Long unwinding": (r) => r.buildup === "Long unwinding",
+  };
+  const SORT_DEFAULT = { "Losers": ["chg", 1], "Gap down ≤−1%": ["gap", 1], "Near day low": ["pos", 1] };
+  let rows = [], filt = "All", sortK = "chg", dir = -1, day = "", times = [], slT = null;
+
+  function render() {
+    const q = $("q").value.trim().toUpperCase();
+    const cnt = Object.fromEntries(Object.keys(F).map((k) => [k, rows.filter(F[k]).length]));
+    $("chips").innerHTML = Object.keys(F).map((k) => `<button data-f="${esc(k)}" class="${k === filt ? "on" : ""}">${esc(k)}<span>${cnt[k]}</span></button>`).join("");
+    let r = rows.filter(F[filt]).filter((x) => !q || x.sym.includes(q));
+    r.sort((a, b) => ((a[sortK] ?? -Infinity) > (b[sortK] ?? -Infinity) ? 1 : -1) * dir);
+    const cols = [["sym", "Stock"], ["ltp", "Price"], ["chg", "Change"], ["gap", "Gap"], ["pos", "Day range"], ["vol_ratio", "Value ×"], ["oi_chg", "Fut OI"], ["buildup", "Buildup"], ["", ""]];
+    $("t").innerHTML = `<tr>${cols.map(([k, l]) => `<th data-k="${k}">${l}${k === sortK ? (dir < 0 ? " ▼" : " ▲") : ""}</th>`).join("")}</tr>` +
+      r.map((x) => `<tr><td><b>${esc(x.sym)}</b></td><td>${num(x.ltp)}</td><td>${pc(x.chg)}</td><td>${pc(x.gap)}</td>
+        <td title="low ${num(x.low)} · high ${num(x.high)}">${x.pos == null ? "—" : `<span class="bar"><i style="left:${Math.round(x.pos * 56)}px"></i></span>`}</td>
+        <td class="${x.vol_ratio >= 2 ? "up" : ""}">${x.vol_ratio == null ? "—" : num(x.vol_ratio, 1) + "×"}</td><td>${pc(x.oi_chg)}</td>
+        <td class="b">${TAG[x.buildup] ? `<span class="tag t-${TAG[x.buildup]}">${esc(x.buildup)}</span>` : "—"}</td>
+        <td class="act"><a href="/?symbol=${encodeURIComponent(x.sym)}" target="_blank" title="Chart">📈</a><a href="oi.html?symbol=${encodeURIComponent(x.sym)}" target="_blank" title="Option OI">📊</a></td></tr>`).join("");
+  }
+
+  async function load() {
+    try {
+      const t = times[+$("slider").value];
+      const d = await (await fetch(day && t ? `/api/screener?at=${day}T${t}` : "/api/screener")).json();
+      rows = d.rows || []; $("at").textContent = `${day ? "⏪ " + day + " " : "updated "}${d.at || "—"} · ${rows.length} stocks`;
+      $("tlab").textContent = day ? `${day} ${t || ""}` : "live";
+      render();
+    } catch (e) { $("at").textContent = "screener unavailable"; }
+  }
+  $("chips").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; filt = b.dataset.f; [sortK, dir] = SORT_DEFAULT[filt] || (["Volume surge ≥2×"].includes(filt) ? ["vol_ratio", -1] : ["chg", -1]); render(); };
+  $("t").onclick = (e) => { const th = e.target.closest("th"); if (!th || !th.dataset.k) return; if (sortK === th.dataset.k) dir = -dir; else { sortK = th.dataset.k; dir = -1; } render(); };
+  $("q").oninput = render;
+  async function days() {
+    const d = await (await fetch("/api/screener/times")).json();
+    $("day").innerHTML = `<option value="">● Live</option>` + (d.days || []).map((x) => `<option>${x}</option>`).join("");
+  }
+  $("day").onchange = async () => {
+    day = $("day").value; times = [];
+    if (day) times = (await (await fetch(`/api/screener/times?day=${day}`)).json()).times || [];
+    const sl = $("slider"); sl.max = Math.max(0, times.length - 1); sl.value = sl.max; sl.disabled = !times.length;
+    $("rw").classList.toggle("on", !!day); load();
+  };
+  $("slider").oninput = () => { clearTimeout(slT); slT = setTimeout(load, 120); };
+  const step = (n) => { const sl = $("slider"), v = +sl.value + n; if (day && v >= 0 && v <= +sl.max) { sl.value = v; load(); } };
+  $("prev").onclick = () => step(-1); $("next").onclick = () => step(1);
+  days(); load();
+  setInterval(() => { if (!day) load(); }, 60000);
+})();
+</script>
+</body>
+</html>

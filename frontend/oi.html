@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OI Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><rect x='3' y='6' width='2' height='7' fill='%23ef5350'/><rect x='6' y='3' width='2' height='10' fill='%2326a69a'/><rect x='9' y='5' width='2' height='8' fill='%23ef5350'/><rect x='12' y='8' width='2' height='5' fill='%2326a69a'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 12px 16px 40px; }
+    .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    h1 { font-size: 20px; margin: 0 8px 0 0; } .grow { flex: 1; } .dim { color: var(--dim); } a { color: #7aa7ff; }
+    select, input { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; }
+    .seg button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); padding: 5px 10px; cursor: pointer; }
+    .seg button.on { border-color: var(--accent); color: #fff; background: #2962ff33; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .cards div { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .cards b { display: block; font-size: 19px; } .cards small { color: var(--dim); }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+    .card h2 { font-size: 14px; margin: 0 0 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .card h2 .dim { font-weight: 400; font-size: 12px; }
+    #bars { width: 100%; height: 300px; } #hist { height: 240px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 3px 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+    td.k { text-align: center; font-weight: 600; background: var(--panel2); }
+    tr.atm td { background: #2962ff22; } .up { color: var(--up); } .down { color: var(--down); }
+    .tbl { max-height: 460px; overflow: auto; }
+    .lgd { font-size: 12px; color: var(--dim); }
+    .lgd i { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 10px; vertical-align: -1px; }
+    .rw { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; font-size: 13px; }
+  .rw #slider { flex: 1; min-width: 160px; } .rw.on { border-color: #ffb74d; } .rw.on #tlab { color: #ffb74d; }
+  .rw button, .rw select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>📊 OI dashboard</h1>
+    <span class="seg" id="und"><button data-s="NIFTY 50">NIFTY</button><button data-s="SENSEX">SENSEX</button><button data-s="NIFTY BANK">BANKNIFTY</button></span>
+    <input id="stock" list="stocks" placeholder="F&O stock…" style="width:120px"><datalist id="stocks"></datalist>
+    <select id="exp"></select>
+    <span class="dim" id="at"></span>
+    <span class="grow"></span>
+    <a href="screener.html">🔎 Screener</a> <a href="/">← Chart</a>
+  </div>
+  <div class="rw" id="rw">
+    <b>⏪ Rewind</b>
+    <select id="day"><option value="">● Live</option></select>
+    <button id="prev" title="one minute back">◀</button>
+    <input id="slider" type="range" min="0" max="0" value="0" disabled>
+    <button id="next" title="one minute forward">▶</button>
+    <button id="play" title="play the day">⏵ Play</button>
+    <select id="speed" title="replay speed"><option value="1000">1×</option><option value="400" selected>2.5×</option><option value="150">6×</option></select>
+    <b id="tlab" class="dim">live</b>
+    <span class="dim" id="src"></span>
+  </div>
+  <div class="cards" id="cards"></div>
+  <div class="card">
+    <h2>Open interest by strike <span class="seg" id="mode"><button data-m="oi" class="on">OI</button><button data-m="chg">OI change</button></span>
+      <span class="dim" id="since"></span></h2>
+    <svg id="bars"></svg>
+    <div class="lgd"><i style="background:#ef5350"></i>Calls (CE) — resistance where big<i style="background:#26a69a"></i>Puts (PE) — support where big
+      <i style="background:#ffeb3b"></i>price<i style="background:#e040fb"></i>max pain · OI in lots</div>
+  </div>
+  <div class="card">
+    <h2>Through the day <span class="dim">recorded every minute while ChartLab runs (NIFTY near + next expiry, SENSEX, BANKNIFTY; any chain you open is saved too)</span></h2>
+    <div id="hist"></div>
+    <div class="lgd"><i style="background:#ffb74d"></i>PCR (left)<i style="background:#ffeb3b"></i>price<i style="background:#e040fb"></i>max pain<i style="background:#ef5350"></i>call wall<i style="background:#26a69a"></i>put wall</div>
+  </div>
+  <div class="card">
+    <h2>Chain <span class="dim">CE | strike | PE — OI and change in lots, IV % estimate</span></h2>
+    <div class="tbl"><table id="tbl"></table></div>
+  </div>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const num = (v, d = 0) => (v == null || !isFinite(v) ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const sg = (v) => (v == null ? "—" : `${v > 0 ? "+" : ""}${num(v)}`);
+  const qs = new URLSearchParams(location.search);
+  let sym = qs.get("symbol") || "NIFTY 50", expiry = null, mode = "oi", data = null, chart = null, ser = {};
+  let day = "", times = [], at = null, playT = null, slT = null;   // rewind state ("" = live)
+
+  function marks() {
+    document.querySelectorAll("#und button").forEach((b) => b.classList.toggle("on", b.dataset.s === sym));
+    $("stock").value = ["NIFTY 50", "SENSEX", "NIFTY BANK"].includes(sym) ? "" : sym;
+    document.querySelectorAll("#mode button").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+  }
+
+  function drawBars() {
+    const d = data, svg = $("bars");
+    if (!d || !d.rows) return;
+    const W = svg.clientWidth || 900, H = 300, P = { l: 48, r: 10, t: 10, b: 36 };
+    const rows = d.rows, n = rows.length, bw = (W - P.l - P.r) / Math.max(n, 1);
+    const val = (r, s) => (mode === "oi" ? r[s]?.oi : r[s]?.chg) ?? 0;
+    const vals = rows.flatMap((r) => [val(r, "ce"), val(r, "pe")]);
+    const mx = Math.max(1, ...vals.map(Math.abs)), mn = mode === "chg" ? -mx : 0;
+    const y = (v) => P.t + (H - P.t - P.b) * (1 - (v - mn) / (mx - mn));
+    let s = "";
+    for (let i = 0; i <= 4; i++) {
+      const v = mn + (mx - mn) * i / 4, yy = y(v);
+      s += `<line x1="${P.l}" x2="${W - P.r}" y1="${yy}" y2="${yy}" stroke="#2a2e39"/><text x="${P.l - 4}" y="${yy + 4}" fill="#787b86" font-size="10" text-anchor="end">${num(v)}</text>`;
+    }
+    rows.forEach((r, i) => {
+      const x = P.l + i * bw, w = Math.max(1, bw / 2 - 1);
+      for (const [side, col, off] of [["ce", "#ef5350", 0], ["pe", "#26a69a", bw / 2]]) {
+        const v = val(r, side), y0 = y(0), y1 = y(v);
+        s += `<rect x="${x + off}" y="${Math.min(y0, y1)}" width="${w}" height="${Math.max(1, Math.abs(y1 - y0))}" fill="${col}" opacity="0.85"><title>${r.strike} ${side.toUpperCase()}: ${mode === "oi" ? "OI " + num(v) : "change " + sg(v)} lots</title></rect>`;
+      }
+      if (n <= 40 || i % Math.ceil(n / 30) === 0)
+        s += `<text x="${x + bw / 2}" y="${H - P.b + 12}" fill="#787b86" font-size="9" text-anchor="end" transform="rotate(-45 ${x + bw / 2} ${H - P.b + 12})">${num(r.strike)}</text>`;
+    });
+    const xAt = (k) => { const i = rows.findIndex((r) => r.strike >= k); return P.l + (i < 0 ? n : i) * bw; };
+    for (const [k, col, lab] of [[d.spot, "#ffeb3b", "price"], [d.max_pain, "#e040fb", "max pain"]]) {
+      if (k == null) continue;
+      const x = xAt(k);
+      s += `<line x1="${x}" x2="${x}" y1="${P.t}" y2="${H - P.b}" stroke="${col}" stroke-dasharray="4 3"/><text x="${x + 3}" y="${P.t + 10}" fill="${col}" font-size="10">${lab} ${num(k)}</text>`;
+    }
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.innerHTML = s;
+  }
+
+  function cards() {
+    const d = data;
+    const mpd = d.max_pain != null ? d.max_pain - d.spot : null;
+    const lean = d.pcr == null ? "" : d.pcr >= 1.2 ? "puts heavy — supportive" : d.pcr <= 0.8 ? "calls heavy — capped" : "balanced";
+    $("cards").innerHTML = [
+      ["Price", num(d.spot, 2), `${esc(d.symbol)} · lot ${d.lot}`],
+      ["PCR (put ÷ call OI)", d.pcr ?? "—", lean],
+      ["Max pain", num(d.max_pain), mpd == null ? "" : `${sg(Math.round(mpd))} from price`],
+      ["Call wall (resistance)", num(d.call_wall), "biggest CE OI above"],
+      ["Put wall (support)", num(d.put_wall), "biggest PE OI below"],
+      ["ATM IV", d.atm_iv == null ? "—" : d.atm_iv + "%", `ATM ${num(d.atm)}`],
+    ].map(([a, b, c]) => `<div><small>${a}</small><b>${b}</b><small>${esc(c)}</small></div>`).join("");
+    $("since").textContent = d.since ? `change vs ${d.since}` : "";
+    $("at").textContent = d.replay ? `⏪ ${day} ${d.at}` : `updated ${d.at}`;
+  }
+
+  function table() {
+    const d = data, atm = d.atm;
+    const side = (s) => (s ? [num(s.oi), `<span class="${(s.chg ?? 0) >= 0 ? "up" : "down"}">${sg(s.chg)}</span>`, num(s.ltp, 2), s.iv ?? "—"] : ["", "", "", ""]);
+    $("tbl").innerHTML = `<tr><th>CE OI</th><th>CE chg</th><th>CE LTP</th><th>CE IV</th><th style="text-align:center">Strike</th><th>PE LTP</th><th>PE IV</th><th>PE chg</th><th>PE OI</th></tr>` +
+      d.rows.map((r) => { const c = side(r.ce), p = side(r.pe);
+        return `<tr class="${r.strike === atm ? "atm" : ""}"><td>${c[0]}</td><td>${c[1]}</td><td>${c[2]}</td><td>${c[3]}</td><td class="k">${num(r.strike, r.strike % 1 ? 1 : 0)}</td>
+          <td>${p[2]}</td><td>${p[3]}</td><td>${p[1]}</td><td>${p[0]}</td></tr>`; }).join("");
+    const row = $("tbl").querySelector("tr.atm");
+    if (row && !table.scrolled) { row.scrollIntoView({ block: "center" }); table.scrolled = true; window.scrollTo(0, 0); }
+  }
+
+  async function hist() {
+    const hq = new URLSearchParams({ symbol: sym, ...(day ? { day } : {}), ...(expiry ? { expiry } : {}) });
+    let h = (await (await fetch(`/api/oi/history?${hq}`)).json()).rows || [];
+    if (at) h = h.filter((r) => r.ts.slice(11, 16) <= at.slice(11));
+    if (!chart) {
+      chart = LightweightCharts.createChart($("hist"), { autoSize: true, layout: { background: { color: "transparent" }, textColor: "#787b86" },
+        grid: { vertLines: { visible: false }, horzLines: { color: "#2a2e39" } }, leftPriceScale: { visible: true },
+        timeScale: { timeVisible: true, secondsVisible: false } });
+      ser.pcr = chart.addSeries(LightweightCharts.LineSeries, { color: "#ffb74d", lineWidth: 2, priceScaleId: "left" });
+      for (const [k, c, w] of [["spot", "#ffeb3b", 2], ["max_pain", "#e040fb", 1], ["call_wall", "#ef5350", 1], ["put_wall", "#26a69a", 1]])
+        ser[k] = chart.addSeries(LightweightCharts.LineSeries, { color: c, lineWidth: w, priceScaleId: "right", lineStyle: k === "spot" ? 0 : 2 });
+    }
+    const t = (ts) => Math.floor(Date.parse(ts + "Z") / 1000);
+    for (const k of Object.keys(ser)) ser[k].setData(h.filter((r) => r[k] != null).map((r) => ({ time: t(r.ts), value: r[k] })));
+    $("hist").title = h.length ? "" : "No snapshots for this day / expiry — recorded every minute while the market is open.";
+    chart.timeScale().fitContent();
+  }
+
+  async function load() {
+    marks();
+    const cq = new URLSearchParams({ symbol: sym, ...(expiry ? { expiry } : {}), ...(at ? { at } : {}) });
+    const r = await fetch(`/api/oi/chain?${cq}`);
+    const d = await r.json();
+    if (d.error || d.detail) { $("cards").innerHTML = `<div class="dim">${esc(d.error || (typeof d.detail === "string" ? d.detail : "error"))}</div>`; $("tbl").innerHTML = ""; $("bars").innerHTML = ""; return; }
+    data = d; expiry = d.expiry;
+    $("src").textContent = d.replay ? `· ${d.source === "recorded" ? "recorded " + d.ts.replace("T", " ") : d.source}` : "";
+    $("exp").innerHTML = d.expiries.slice(0, 8).map((e) => `<option value="${e}"${e === d.expiry ? " selected" : ""}>${e}</option>`).join("");
+    cards(); drawBars(); table(); hist();
+  }
+
+  // ── rewind ──
+  async function loadDays() {
+    const d = await (await fetch(`/api/oi/days?symbol=${encodeURIComponent(sym)}`)).json();
+    const rec = new Set(d.recorded || []);
+    const all = [...new Set([...(d.recorded || []), ...(d.eod || [])])].sort().reverse();
+    $("day").innerHTML = `<option value="">● Live</option>` + all.map((x) => `<option value="${x}"${x === day ? " selected" : ""}>${x}${rec.has(x) ? "" : " (close only)"}</option>`).join("");
+    if (day && !all.includes(day)) day = "";
+  }
+  async function loadTimes() {
+    times = [];
+    if (day) {
+      const t = await (await fetch(`/api/oi/times?symbol=${encodeURIComponent(sym)}&day=${day}`)).json();
+      const ex = t.expiries || {};
+      const e = expiry && ex[expiry] ? expiry : Object.keys(ex).sort().find((x) => x >= day) || Object.keys(ex)[0];
+      times = e ? ex[e] : [];
+    }
+    const sl = $("slider");
+    sl.max = Math.max(0, times.length - 1); sl.disabled = !times.length;
+    const i = at ? times.findIndex((x) => x >= at.slice(11)) : -1;
+    sl.value = i < 0 ? times.length - 1 : i;
+    $("rw").classList.toggle("on", !!day);
+  }
+  function setAt() {
+    if (!day) { at = null; $("tlab").textContent = "live"; return; }
+    const t = times[+$("slider").value];
+    at = `${day}T${t || "15:30"}`;
+    $("tlab").textContent = t ? `${day} ${t}` : `${day} close`;
+  }
+  async function goDay() {
+    stopPlay();
+    day = $("day").value; at = day ? `${day}T23:59` : null; expiry = null; table.scrolled = false;
+    await loadTimes(); setAt(); load();
+  }
+  function step(n) {
+    if (!times.length) return false;
+    const sl = $("slider"), v = +sl.value + n;
+    if (v < 0 || v > +sl.max) return false;
+    sl.value = v; setAt(); load(); return true;
+  }
+  function stopPlay() { clearInterval(playT); playT = null; $("play").textContent = "⏵ Play"; }
+  $("day").onchange = goDay;
+  $("slider").oninput = () => { setAt(); clearTimeout(slT); slT = setTimeout(load, 120); };
+  $("prev").onclick = () => step(-1);
+  $("next").onclick = () => step(1);
+  $("play").onclick = () => {
+    if (playT) return stopPlay();
+    if (!day) return;
+    if (+$("slider").value >= +$("slider").max) { $("slider").value = 0; setAt(); }
+    $("play").textContent = "⏸ Pause";
+    playT = setInterval(() => { if (!step(1)) stopPlay(); }, +$("speed").value);
+  };
+  $("speed").onchange = () => { if (playT) { stopPlay(); $("play").click(); } };
+
+  document.querySelectorAll("#und button").forEach((b) => (b.onclick = async () => { sym = b.dataset.s; expiry = null; table.scrolled = false; await loadDays(); await loadTimes(); setAt(); load(); }));
+  document.querySelectorAll("#mode button").forEach((b) => (b.onclick = () => { mode = b.dataset.m; marks(); drawBars(); }));
+  $("exp").onchange = async (e) => { expiry = e.target.value; table.scrolled = false; await loadTimes(); setAt(); load(); };
+  $("stock").addEventListener("change", async (e) => { const v = e.target.value.trim().toUpperCase(); if (v) { sym = v; expiry = null; table.scrolled = false; await loadDays(); await loadTimes(); setAt(); load(); } });
+  fetch("/api/paper/stocks").then((r) => r.json()).then((d) => ($("stocks").innerHTML = (d.stocks || []).map((n) => `<option value="${esc(n)}">`).join(""))).catch(() => {});
+  window.addEventListener("resize", drawBars);
+  loadDays().then(load);
+  setInterval(() => { if (!day) load(); }, 60000);
+})();
+</script>
+</body>
+</html>

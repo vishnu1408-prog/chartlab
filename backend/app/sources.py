@@ -25,7 +25,9 @@ class Angel:
     _tokens = None
     _tokens_day = None
     _options: dict = {}       # (exch_seg, name) → [(expiry, strike, "CE"/"PE", token, trading symbol, lot)]
+                              # (index options, MCX options on futures, and NSE stock options — OPTSTK)
     _futures: dict = {}       # MCX name → [(expiry, token, trading symbol)] (option underlyings)
+    _nfo_futures: dict = {}   # NSE stock / index name → [(expiry, token, trading symbol, lot)]
     _last_error = ""
 
     @classmethod
@@ -89,12 +91,12 @@ class Angel:
             except Exception as e:
                 cls._last_error = f"scrip master: {e}"
                 return None
-            t, near, opts, futs = {}, {}, {}, {}
+            t, near, opts, futs, nfo_futs = {}, {}, {}, {}, {}
             for x in m:
                 seg = x.get("exch_seg")
                 name, s = x.get("name", ""), x.get("symbol", "")
                 it = x.get("instrumenttype", "")
-                if it in ("OPTIDX", "OPTFUT") and (seg, name) in OPTION_ROOTS:
+                if (it in ("OPTIDX", "OPTFUT") and (seg, name) in OPTION_ROOTS) or (it == "OPTSTK" and seg == "NFO"):
                     try:
                         exp = dt.datetime.strptime(x.get("expiry", ""), "%d%b%Y").date()
                     except ValueError:
@@ -102,6 +104,14 @@ class Angel:
                     if exp >= today:                         # strikes are in paise in the scrip master
                         opts.setdefault((seg, name), []).append(
                             (exp, float(x["strike"]) / 100, s[-2:], x["token"], s, int(float(x.get("lotsize") or 1))))
+                    continue
+                if seg == "NFO" and it in ("FUTSTK", "FUTIDX"):      # stock / index futures (OI, screener)
+                    try:
+                        exp = dt.datetime.strptime(x.get("expiry", ""), "%d%b%Y").date()
+                    except ValueError:
+                        continue
+                    if exp >= today:
+                        nfo_futs.setdefault(name, []).append((exp, x["token"], s, int(float(x.get("lotsize") or 1))))
                     continue
                 if seg == "MCX" and it == "FUTCOM":
                     try:
@@ -125,7 +135,11 @@ class Angel:
             cls._tokens, cls._tokens_day = t, today
             cls._options = opts
             cls._futures = {k: sorted(v) for k, v in futs.items()}
+            cls._nfo_futures = {k: sorted(v) for k, v in nfo_futs.items()}
         sy = symbols.get(sym)
+        if sy.kind == "option":                          # option contracts: token from the option lists
+            from . import optsym
+            return optsym.token(sym)
         return cls._tokens.get((sy.exchange, sy.angel_name.upper()))
 
     @classmethod
@@ -280,6 +294,27 @@ def binance_history(pair: str) -> int:
     return got
 
 
+# api.binance.com is blocked on many Indian networks; data-api.binance.vision is Binance's public market-data mirror
+# (same /api/v3 market endpoints, no account needed). Try the mirror first, remember whichever answered.
+BINANCE_HOSTS = ["https://data-api.binance.vision", "https://api.binance.com"]
+
+
+def _binance_get(path: str, params: dict):
+    import requests
+    err = None
+    for h in list(BINANCE_HOSTS):
+        try:
+            r = requests.get(h + path, params=params, timeout=20)
+            r.raise_for_status()
+            if BINANCE_HOSTS[0] != h:
+                BINANCE_HOSTS.remove(h)
+                BINANCE_HOSTS.insert(0, h)
+            return r.json()
+        except Exception as e:
+            err = e
+    raise err
+
+
 def binance_klines(pair: str, start: dt.datetime, end: dt.datetime | None = None) -> pd.DataFrame:
     """1-minute klines from the public REST API between IST times start and end (1000 per request)."""
     if config.OFFLINE:
@@ -293,10 +328,7 @@ def binance_klines(pair: str, start: dt.datetime, end: dt.datetime | None = None
         if a > b:
             break
         try:
-            r = requests.get("https://api.binance.com/api/v3/klines",
-                             params={"symbol": pair, "interval": "1m", "startTime": a, "endTime": b, "limit": 1000}, timeout=30)
-            r.raise_for_status()
-            k = r.json()
+            k = _binance_get("/api/v3/klines", {"symbol": pair, "interval": "1m", "startTime": a, "endTime": b, "limit": 1000})
         except Exception as e:
             log.warning("binance klines %s: %s", pair, e)
             break

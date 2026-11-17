@@ -71,13 +71,13 @@ GLOBAL = {
 # contract's multiplier (₹ P&L per 1 point), the size a ₹1–2 lakh account can trade.
 MCX = {
     "MCX GOLD": Symbol("MCX GOLD", "commodity", "", "", "GOLD", 10, "MCX", session_start=540, session_end=1440,
-                       square_off=23 * 60, note="MCX Gold futures, ₹ per 10 g (Angel One) — lot ×10 = GOLDM 100 g"),
+                       square_off=23 * 60, options=True, note="MCX Gold futures, ₹ per 10 g (Angel One) — lot ×10 = GOLDM 100 g"),
     "MCX SILVER": Symbol("MCX SILVER", "commodity", "", "", "SILVER", 5, "MCX", session_start=540, session_end=1440,
-                         square_off=23 * 60, note="MCX Silver futures, ₹ per kg (Angel One) — lot ×5 = SILVERM 5 kg"),
+                         square_off=23 * 60, options=True, note="MCX Silver futures, ₹ per kg (Angel One) — lot ×5 = SILVERM 5 kg"),
     "MCX CRUDEOIL": Symbol("MCX CRUDEOIL", "commodity", "", "", "CRUDEOIL", 10, "MCX", session_start=540, session_end=1440,
-                           square_off=23 * 60, note="MCX Crude oil futures, ₹ per barrel (Angel One) — lot ×10 = CRUDEOILM"),
+                           square_off=23 * 60, options=True, note="MCX Crude oil futures, ₹ per barrel (Angel One) — lot ×10 = CRUDEOILM"),
     "MCX NATURALGAS": Symbol("MCX NATURALGAS", "commodity", "", "", "NATURALGAS", 250, "MCX", session_start=540,
-                             session_end=1440, square_off=23 * 60,
+                             session_end=1440, square_off=23 * 60, options=True,
                              note="MCX Natural gas futures, ₹ per mmBtu (Angel One) — lot ×250 = NATGASMINI"),
 }
 
@@ -122,6 +122,9 @@ def all_symbols() -> dict:
 
 def get(symbol: str) -> Symbol:
     s = all_symbols().get(symbol)
+    if s is None:                                    # an option contract, e.g. "NIFTY 27-Oct-26 23100 CE"
+        from . import optsym
+        s = optsym.symbol(symbol)
     if s is None:
         raise KeyError(f"unknown symbol {symbol!r}")
     return s

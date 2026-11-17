@@ -40,6 +40,7 @@ export class ChartPanel {
     this.el.addEventListener("mousedown", () => app.setActive(this), true);
     this.el.querySelector(".btn-auto").onclick = () => { this.view.autoScale(); this.markAuto(); };
     app.practice.attachDrag(this);
+    app.posLines.attach(this);
   }
 
   config() { return { symbol: this.state.symbol, tf: this.state.tf, chartType: this.state.chartType, indicators: this.indicators.config() }; }
@@ -69,6 +70,7 @@ export class ChartPanel {
       this.app.practice.symbolChanged(this.app.symbols.find((x) => x.symbol === symbol));
       if (r.bars.length) this.app.practice.setPrice(r.bars[r.bars.length - 1].close, r.bars[r.bars.length - 1].time);
     }
+    this.app.posLines.draw(this);                       // open paper positions on this symbol / option
     this.drawings.setItems(await api.drawings(symbol).catch(() => []));
     await this.indicators.refresh();
     this.ohlcLegend({});
@@ -106,6 +108,13 @@ export class ChartPanel {
       if (m.type !== "bars" || m.symbol !== this.state.symbol || m.tf !== this.state.tf || this.app.replay.active) return;
       const v = this.view;
       const lastT = v.bars.length ? v.bars[v.bars.length - 1].time : 0;
+      // the feed only carries the latest few candles: if they start after a gap (page open across the night / a
+      // holiday, or the feed caught up late), reload so the missing candles appear instead of a hole
+      if (lastT && m.bars.length && m.bars[0].time > lastT + v.tfSec && !this._gapReload) {
+        this._gapReload = true;
+        this.load().finally(() => setTimeout(() => (this._gapReload = false), 30000));
+        return;
+      }
       let newBar = false;
       const prevClose = v.bars.length ? v.bars[v.bars.length - 1].close : null;
       for (const b of m.bars) if (b.time >= lastT) { if (b.time > lastT) newBar = true; v.pushBar(b); }

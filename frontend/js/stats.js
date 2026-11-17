@@ -40,7 +40,7 @@ export class StatsDialog {
     this.app = app;
     this.dlg = document.getElementById("dlg-stats");
     this.dlg.querySelectorAll("select").forEach((s) => (s.onchange = () => this.render()));
-    this.dlg.querySelector(".st-clear").onclick = async () => { if (confirm("Delete the whole journal?")) { await api.clearJournal(); this.open(); } };
+    this.dlg.querySelector(".st-clear").onclick = async () => { if (confirm("Delete the practice journal? (Paper-account trades are kept with their accounts.)")) { await api.clearJournal(); this.open(); } };
   }
 
   async open() {

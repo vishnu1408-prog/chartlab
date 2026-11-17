@@ -74,6 +74,16 @@ export class ChartView {
     ts.setVisibleLogicalRange({ from: last + pad - w, to: last + pad });
   }
 
+  /** new replay start (random day / date / picked bar): put the newest candle at the right edge (same zoom) and
+   *  fit the price axis again, so the new day is on screen even if the old view was scrolled or the axis dragged. */
+  focusLast() {
+    const ts = this.chart.timeScale(), r = ts.getVisibleLogicalRange(), last = this.bars.length - 1;
+    if (last < 0) return;
+    const w = r ? Math.max(20, r.to - r.from) : 120, pad = Math.min(5, w * 0.1);
+    ts.setVisibleLogicalRange({ from: last + pad - w, to: last + pad });
+    this.autoScale();
+  }
+
   /** forward step / live tick: update or append the last bar without re-sending everything */
   pushBar(bar) {
     const n = this.bars.length;
@@ -221,6 +231,7 @@ export class ChartView {
     const ku = this.knownUntil;
     const lastT = this.bars.length ? this.bars[this.bars.length - 1].time : null;
     for (const s of visibleAt(shapes, ku, replay, this.tfSec)) {
+      if (s.kind === "footprint") { this.drawFootprint(ctx, s); continue; }
       const pts0 = s.clip && ku != null ? clipPoints(s.points, lastT) : s.points;
       const pts = pts0.map((p) => this.project(p));
       if (pts.some((p) => !p)) continue;
@@ -245,6 +256,71 @@ export class ChartView {
       }
     }
     ctx.setLineDash([]);
+  }
+
+  /** One footprint candle: sell × buy at each price level (numbers when zoomed in, colour heat otherwise),
+   *  diagonal imbalances, the candle's POC box and its delta. */
+  drawFootprint(ctx, s) {
+    if (this.times.indexOf(s.time) < 0) return;                      // only on a candle that is on this chart
+    const x = this.timeToX(s.time);
+    if (x == null || !s.rows.length) return;
+    const bs = this.chart.timeScale().options().barSpacing || 8, half = bs * 0.48;
+    let L = s.level, rows = s.rows;
+    const y0 = this.priceToY(rows[0][0]), y1 = this.priceToY(rows[0][0] + L);
+    if (y0 == null || y1 == null) return;
+    const pxPer = Math.abs(y0 - y1);
+    if (s.mode !== "heat" && bs >= 56 && pxPer < 13) {          // merge price rows until the numbers fit
+      const k = Math.ceil(13 / Math.max(pxPer, 0.5)), big = L * k, m = new Map();
+      for (const [p, sl, by] of rows) {
+        const q = Math.floor(p / big + 1e-9) * big, r = m.get(q) || [q, 0, 0];
+        r[1] += sl; r[2] += by; m.set(q, r);
+      }
+      rows = [...m.values()].sort((a, b) => b[0] - a[0]);
+      L = big;
+      s = { ...s, poc: rows.reduce((a, r) => (r[1] + r[2] > a[1] + a[2] ? r : a))[0] };
+    }
+    const yTop = this.priceToY(rows[0][0] + L), yBot = this.priceToY(rows[rows.length - 1][0]);
+    if (yTop == null || yBot == null) return;
+    const h = (yBot - yTop) / rows.length;
+    const numbers = s.mode === "numbers" || (s.mode !== "heat" && bs >= 64 && h >= 10);
+    const maxv = Math.max(1e-9, ...rows.map((r) => Math.max(r[1], r[2])));
+    const fmt = (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v >= 100 ? Math.round(v).toString()
+      : v >= 10 ? v.toFixed(1) : v > 0 ? v.toFixed(2) : "0");
+    rows.forEach(([p, sell, buy], i) => {
+      const y = this.priceToY(p + L);
+      if (y == null) return;
+      if (numbers) { ctx.fillStyle = "rgba(19,23,34,0.88)"; ctx.fillRect(x - half, y, half * 2, h); }
+      ctx.fillStyle = `rgba(239,83,80,${(0.75 * sell / maxv).toFixed(3)})`;
+      ctx.fillRect(x - half, y, half, h);
+      ctx.fillStyle = `rgba(38,166,154,${(0.75 * buy / maxv).toFixed(3)})`;
+      ctx.fillRect(x, y, half, h);
+      if (Math.abs(p - s.poc) < L / 2) { ctx.strokeStyle = "#ffeb3b"; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.strokeRect(x - half, y, half * 2, h); }
+      if (!numbers) return;
+      const below = rows[i + 1], above = rows[i - 1];                // diagonal: buy vs the sell one level lower
+      const buyImb = below && buy > 0 && buy >= s.imb * Math.max(below[1], 1e-9);
+      const sellImb = above && sell > 0 && sell >= s.imb * Math.max(above[2], 1e-9);
+      const fs = Math.max(8, Math.min(11, Math.floor(h - 1)));
+      ctx.font = `${sellImb ? "bold " : ""}${fs}px Inter, system-ui, sans-serif`;
+      ctx.textBaseline = "middle"; ctx.textAlign = "right";
+      ctx.fillStyle = sellImb ? "#ff5252" : "#e0a3a3";
+      ctx.fillText(fmt(sell), x - 3, y + h / 2);
+      ctx.font = `${buyImb ? "bold " : ""}${fs}px Inter, system-ui, sans-serif`;
+      ctx.textAlign = "left";
+      ctx.fillStyle = buyImb ? "#00e676" : "#9fd9d2";
+      ctx.fillText(fmt(buy), x + 3, y + h / 2);
+    });
+    if (bs >= 22) {
+      const d = s.delta;
+      label(ctx, `Δ${d >= 0 ? "+" : ""}${fmt(Math.abs(d)).replace(/^/, d < 0 ? "-" : "")}`, x, yBot + 9, d >= 0 ? "#26a69a" : "#ef5350", "center", 10);
+    }
+  }
+
+  /** review lines (trade review): kept apart from the practice panel's lines, which it redraws on every bar */
+  setReviewLines(lines) {
+    for (const l of this.reviewLines || []) this.candles.removePriceLine(l);
+    this.reviewLines = (lines || []).filter((x) => x.price != null && isFinite(x.price)).map((x) => this.candles.createPriceLine({
+      price: x.price, color: x.color, lineWidth: 1, lineStyle: x.dash ? LC.LineStyle.Dashed : LC.LineStyle.Solid,
+      axisLabelVisible: true, title: x.title }));
   }
 
   clearPriceLines() { for (const l of this.priceLines) this.candles.removePriceLine(l); this.priceLines = []; }

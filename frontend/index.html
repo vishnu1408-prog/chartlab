@@ -26,6 +26,13 @@
     <button id="btn-stats" class="tb" title="Your practice statistics and trade review">📊 Stats</button>
     <button id="btn-lab" class="tb" title="Harmonic practice: check my drawing, trade-plan drill, flashcards, pattern library, daily drill, stats">🎓 Harmonics</button>
     <button id="btn-coach" class="tb" title="Pattern coach: ChartLab marks harmonic patterns itself and explains them (challenge mode in the ⋀⋁ menu)">🤖 Coach</button>
+    <a class="tb" href="oi.html" target="_blank" title="OI dashboard: max pain, PCR through the day, OI by strike — NIFTY, SENSEX, BANKNIFTY, F&amp;O stocks" style="text-decoration:none">📊 OI</a>
+    <a class="tb" href="strategy.html" target="_blank" title="Option strategy builder (paper): spreads, straddles, strangles, iron condors — payoff, max profit / loss, breakevens" style="text-decoration:none">🧩 Strategy</a>
+    <a class="tb" href="screener.html" target="_blank" title="F&amp;O stock screener: movers, gaps, day high/low, volume surge, long/short buildup" style="text-decoration:none">🔎 Screener</a>
+    <a class="tb" href="flows.html" target="_blank" title="FII / DII: cash-market buying &amp; selling, NSDL FPI, F&amp;O positions (index futures long %, calls, puts)" style="text-decoration:none">🏦 FII/DII</a>
+    <a class="tb" href="events.html" target="_blank" title="Events calendar: RBI, CPI, Fed, US data, expiries — add your own" style="text-decoration:none">📅 Events</a>
+    <a class="tb" href="data.html" target="_blank" title="Data: SQL over prices, options and all paper / signal records (read-only)" style="text-decoration:none">🗄 Data</a>
+    <a class="tb" href="swing.html" target="_blank" title="Swing picks: 2–6 week stock ideas with stop, target and reasons (paper trading)" style="text-decoration:none">📈 Swing</a>
     <div class="grow"></div>
     <span id="status" class="status">…</span>
     <button id="btn-practice" class="tb" title="Show / hide the side panel">☰ Panel</button>
@@ -43,7 +50,10 @@
         <label>R:R 1: <input type="number" class="dp-ratio" min="0.5" max="10" step="0.5"></label>
         <label title="Number of price rows in the volume profile">Rows <input type="number" class="dp-rows" min="5" max="200" step="1"></label>
         <label title="Notify me when price crosses this line">🔔 Alert <input type="checkbox" class="dp-alert"></label>
+        <span class="dp-fib"><label title="Show 1.272 / 1.618 / 2.618 extensions">Ext <input type="checkbox" class="dp-fext"></label><label title="Extend the lines to the right edge">→ <input type="checkbox" class="dp-fextend"></label><label title="Swap 0 and 1 (measure from the other end)">Rev <input type="checkbox" class="dp-frev"></label><label title="Shade the bands between levels">Fill <input type="checkbox" class="dp-ffill"></label></span>
+        <span class="dp-flv" hidden><label title="Levels, comma-separated (0 = end of the swing)">Levels <input type="text" class="dp-flevels" size="22" placeholder="0, 0.5, 1, 1.5, 2"></label></span>
         <button class="dp-check" title="Check my drawing: compare with the real swing points and name the pattern" hidden>✔ Check</button>
+        <label title="Lock: it can't be moved — dragging over it moves the chart">🔒 <input type="checkbox" class="dp-lock"></label>
         <button class="dp-del" title="Delete (Del)">🗑</button>
       </div>
       <div id="lab" hidden>
@@ -66,7 +76,8 @@
           <option value="minute">1 minute steps</option><option value="bar">1 bar steps</option>
         </select>
         <input type="date" class="rp-date" title="Start the replay at this day's open">
-        <button class="rp-random" title="Random day">🎲</button>
+        <select class="rp-year" title="Practise only this year: 🎲 random and 🙈 Blind pick days from it"><option value="">All years</option></select>
+        <button class="rp-random" title="Random day (from the chosen year)">🎲</button>
         <button class="rp-blind" title="Blind practice: random day with the date hidden">🙈 Blind</button>
         <button class="rp-back" title="Back one step (←, Shift+← = 10)">⏮</button>
         <button class="rp-play" title="Play / pause (Space)">▶</button>
@@ -82,11 +93,15 @@
     </section>
 
     <aside id="practice" data-tab="practice">
-      <div class="seg side-tabs"><button data-tab="practice">Practice</button><button data-tab="news">📰 News</button><button data-tab="chain" title="Live option chain (Angel One)">⛓ Options</button></div>
+      <div class="seg side-tabs"><button data-tab="practice">Practice</button><button data-tab="news">📰 News</button><button data-tab="chain" title="Live option chain (Angel One)">⛓ Options</button><button data-tab="paper" title="Live paper trading: NIFTY / SENSEX options at real prices (no real orders)">📝 Paper</button></div>
 
       <div id="tab-practice" class="side-tab">
         <div class="seg pt-inst" title="What you trade">
-          <button data-inst="index">Index</button><button data-inst="option">ATM Option</button>
+          <button data-inst="index">Index</button><button data-inst="option">Option</button>
+        </div>
+        <div class="pt-grid pt-optrow">
+          <label>Strike <select class="pt-strike"><option value="0">ATM</option><option value="-100">ITM 100</option><option value="-200">ITM 200</option><option value="100">OTM 100</option></select></label>
+          <label title="Nearest = the weekly that was nearest on that day (model price if the data has no trade). Real data = the nearest expiry that really traded at that minute.">Expiry <select class="pt-expmode"><option value="nearest">Nearest</option><option value="real">Nearest with real data</option></select></label>
         </div>
         <div class="pt-grid">
           <label>Qty <input type="number" class="pt-qty" min="1" value="65"></label>
@@ -101,6 +116,10 @@
           <button class="pt-buy" title="Shift+B">BUY</button>
           <button class="pt-sell" title="Shift+S">SELL</button>
           <button class="pt-close" title="Shift+C">Close</button>
+        </div>
+        <div class="pt-btns pt-sellrow" title="Option seller: you receive the premium; you lose if the option's price rises. Stop is ABOVE your sell price, target BELOW.">
+          <button class="pt-sellce" title="Sell (write) the call — profits if the market stays below the strike / falls">SELL CE</button>
+          <button class="pt-sellpe" title="Sell (write) the put — profits if the market stays above the strike / rises">SELL PE</button>
         </div>
         <div class="pt-pos"></div>
         <div class="pt-stats"></div>
@@ -128,6 +147,50 @@
         </div>
         <div class="ch-head small"></div>
         <div class="ch-body"></div>
+      </div>
+      <div id="tab-paper" class="side-tab">
+        <div class="pp-top">
+          <div class="seg pp-acct"><button data-acct="manual" title="Your own paper trades">✋ Mine</button><button data-acct="crypto" title="BTC options on Delta Exchange India (USD account, 24/7, sold at 05:30 IST day end and 5 min before expiry)">₿ Crypto</button><button data-acct="bot" title="Morning Edge signals traded automatically on real option prices (ITM-200, 2 lots, stop 35 index pts, half at +35, rest to cost, out 15:15)">🤖 ME</button><button data-acct="gann" title="Gann opening drive traded automatically (ITM-200, 2 lots, stop / target 35 index pts, out 15:15)">🤖 Gann</button><button data-acct="plan" title="Daily Plan traded automatically: max 1 trade a day — Gann if before 09:45, else Morning Edge at 09:45, else a later Gann signal">🤖 Plan</button><button data-acct="ng" title="MCX natural gas opening drive — forward test (validator: WEAK): strong 09:00 bar → ITM-1 CE / PE, 1 lot, stop / target 0.15×ADR on the futures, out 23:00">🤖 NG</button></div>
+          <div class="pp-sum small"></div>
+        </div>
+        <div class="pp-ticket">
+          <div class="pp-row">
+            <div class="seg pp-und"><button data-u="NIFTY 50">NIFTY</button><button data-u="SENSEX">SENSEX</button><button data-u="MCX CRUDEOIL" title="MCX crude oil options (lot 100 bbl) — 09:00–23:30, out 23:00">CRUDE</button><button data-u="MCX NATURALGAS" title="MCX natural gas options (lot 1,250 mmBtu) — 09:00–23:30, out 23:00">NG</button><button data-u="BTC" title="Bitcoin options (Delta Exchange India)">BTC</button></div>
+            <input type="text" class="pp-stock" list="pp-stocks" placeholder="Stock…" title="Stock options: type an F&amp;O stock (e.g. RELIANCE) and press Enter" style="width:96px">
+            <datalist id="pp-stocks"></datalist>
+            <select class="pp-exp" title="Expiry"></select>
+            <div class="seg pp-type"><button data-t="CE">CE</button><button data-t="PE">PE</button></div>
+            <div class="seg pp-side" title="BUY the option, or SELL (write) it — selling receives the premium, blocks margin, and its loss is not limited"><button data-s="BUY">BUY</button><button data-s="SELL">SELL</button></div>
+          </div>
+          <div class="pp-row">
+            <select class="pp-strike" title="Strike"></select>
+            <div class="seg pp-quick" title="Strike relative to the money (for the chosen CE / PE)">
+              <button data-m="0">ATM</button><button data-m="-100">ITM100</button><button data-m="-200">ITM200</button><button data-m="100">OTM100</button>
+            </div>
+          </div>
+          <div class="pp-quote small"></div>
+          <div class="pp-row">
+            <label>Lots <input type="number" class="pp-lots" min="1" value="1"></label>
+            <select class="pp-otype"><option value="MARKET">Market</option><option value="LIMIT">Limit</option></select>
+            <input type="number" class="pp-limit" step="0.05" placeholder="limit ₹" style="display:none">
+          </div>
+          <div class="pp-row pp-risk">
+            <label title="Stop / target: index points or option points from your entry, a NIFTY/SENSEX level, or an option price (₹). Open positions show their levels on the option chart and the index chart — drag the lines to move them.">Stop
+              <select class="pp-sb"><option value="">none</option><option value="index_pts" selected>index pts</option><option value="option_pts">option pts</option><option value="index">index level</option><option value="option">option ₹</option></select>
+              <input type="number" class="pp-sv" value="35"></label>
+            <label>Target
+              <select class="pp-tb"><option value="">none</option><option value="index_pts" selected>index pts</option><option value="option_pts">option pts</option><option value="index">index level</option><option value="option">option ₹</option></select>
+              <input type="number" class="pp-tv" value="35"></label>
+          </div>
+          <label class="small"><input type="checkbox" class="pp-half" checked> At target sell half, move the rest's stop to cost</label>
+          <input type="text" class="pp-note" maxlength="200" placeholder="Why this trade? (required — saved with it for your review)">
+          <button class="pp-buy">BUY</button>
+          <div class="pp-est dim small"></div>
+        </div>
+        <div class="pp-pos"></div>
+        <div class="pp-orders"></div>
+        <div class="pp-trades"></div>
+        <details class="pp-set small"><summary>Settings &amp; charges</summary><div class="pp-set-body"></div></details>
       </div>
     </aside>
   </main>
@@ -159,7 +222,7 @@
   <dialog id="dlg-stats" class="dlg wide">
     <form method="dialog" class="dlg-head"><h3>📊 Practice statistics &amp; review</h3><button>✕</button></form>
     <div class="st-filters">
-      <select class="st-mode"><option value="">Replay + live</option><option value="replay">Replay only</option><option value="live">Live only</option></select>
+      <select class="st-mode"><option value="">All trades</option><option value="replay">Replay practice</option><option value="live">Live practice</option><option value="paper">Paper (live accounts + bots)</option></select>
       <select class="st-symbol"></select>
       <select class="st-scope"><option value="all">All sessions</option><option value="session">This session</option></select>
     </div>
@@ -224,7 +287,7 @@
     <form method="dialog" class="dlg-head"><h3>Shortcuts &amp; help</h3><button>✕</button></form>
     <table class="keys">
       <tr><td>/</td><td>Search symbol</td></tr><tr><td>1 – 7</td><td>Timeframe 1m … 1D</td></tr>
-      <tr><td>Alt+T / H / V / R / F</td><td>Trend line / horizontal / vertical / rectangle / Fibonacci</td></tr>
+      <tr><td>Alt+T / H / V / R / F / P</td><td>Trend line / horizontal / vertical / rectangle / Fibonacci / pen (freehand)</td></tr>
       <tr><td>Alt+K</td><td>Chart type: candles ↔ Heikin Ashi</td></tr>
       <tr><td>Esc</td><td>Cancel tool · Del: delete selected drawing · double-click: edit · 🔔 in the box = line alert</td></tr>
       <tr><td>Replay: → / ←</td><td>Step forward / back (1 minute or 1 bar, Shift = 10) · ↓ jump to candle close · Space: play/pause</td></tr>

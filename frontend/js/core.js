@@ -10,6 +10,16 @@ export const anchorOf = (sym) => sym?.session_start ?? NSE_ANCHOR;
 export const minuteOfDay = (t) => Math.floor((((t % 86400) + 86400) % 86400) / 60);
 export const dayOf = (t) => Math.floor(t / 86400);
 
+const OPTION_ROOT = { "NIFTY 50": "NIFTY", "NIFTY BANK": "BANKNIFTY", "NIFTY FIN SERVICE": "FINNIFTY", "SENSEX": "SENSEX",
+  "MCX CRUDEOIL": "CRUDEOIL", "MCX NATURALGAS": "NATURALGAS", "MCX GOLD": "GOLD", "MCX SILVER": "SILVER" };
+
+/** the chart symbol of an option contract, e.g. "NIFTY 27-Oct-26 22950 CE" (the option's own premium chart) */
+export function optionChartName({ symbol, expiry, strike, type }) {
+  const d = new Date(expiry + "T00:00:00Z");
+  const mon = d.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+  return `${OPTION_ROOT[symbol] || symbol} ${String(d.getUTCDate()).padStart(2, "0")}-${mon}-${String(d.getUTCFullYear()).slice(2)} ${Number(strike)} ${type}`;
+}
+
 export function fmtTime(t, withDate = true) {
   const d = new Date(t * 1000);
   const p = (n) => String(n).padStart(2, "0");
@@ -310,6 +320,11 @@ export class PaperEngine {
 
 // ───────────────────────────── Drawing geometry ─────────────────────────────
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.272, 1.618];
+export const FIB_RET = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+export const FIB_EXT = [1.272, 1.618, 2.618];
+// TradingView-like colours per level (line + band below it)
+export const FIB_COLORS = { 0: "#787b86", 0.236: "#f23645", 0.382: "#ff9800", 0.5: "#4caf50", 0.618: "#089981",
+  0.786: "#00bcd4", 1: "#787b86", 1.272: "#2962ff", 1.618: "#9c27b0", 2.618: "#e91e63" };
 // Chart-pattern / Elliott / cycle tools (TradingView's "Patterns" menu). labels: one per click point (null = none).
 export const PATTERNS = {
   xabcd:      { group: "Chart patterns", name: "XABCD pattern", labels: ["X", "A", "B", "C", "D"], fill: [[0, 1, 2], [2, 3, 4]] },
@@ -329,7 +344,7 @@ export const PATTERNS = {
   sine:       { group: "Cycles", name: "Sine line", labels: [null, null], cycle: true },
 };
 
-export const TOOL_POINTS = { trend: 2, ray: 2, hline: 1, vline: 1, rect: 2, fib: 2, text: 1, measure: 2, rr: 2, frvp: 2,
+export const TOOL_POINTS = { pen: 2, trend: 2, ray: 2, hline: 1, vline: 1, rect: 2, fib: 2, fibext: 2, text: 1, measure: 2, rr: 2, frvp: 2,
   ...Object.fromEntries(Object.entries(PATTERNS).map(([k, v]) => [k, v.labels.length])) };
 
 /** Is point i a swing high (label goes above) — compared with its neighbours. */
@@ -363,6 +378,18 @@ export function intersect(p1, p2, p3, p4) {
   return { x: (a * (p3.x - p4.x) - (p1.x - p2.x) * b) / d, y: (a * (p3.y - p4.y) - (p1.y - p2.y) * b) / d };
 }
 
+/** Trend-based Fib extension (2 points, drag along the swing): 0 at the end of the drag, then the levels continue beyond it
+ *  in the drag direction in steps of the swing size (0.5 = half the swing further, 1 = one full swing further, …). */
+export const FIB_EXT_LEVELS = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
+export function fibExtPrices(p0, p1, levels = FIB_EXT_LEVELS) {
+  return levels.map((lv) => ({ level: lv, price: p1 + (p1 - p0) * lv }));
+}
+/** "0, 0.5, 1" → sorted unique numbers (null if nothing valid) */
+export function parseLevels(text) {
+  const v = [...new Set(String(text || "").split(/[,\s]+/).filter((s) => s !== "").map(Number).filter(Number.isFinite))].sort((a, b) => a - b);
+  return v.length ? v : null;
+}
+
 export function fibPrices(p0, p1, levels = FIB_LEVELS) {
   // 0 at the second point (end of the move), 1 at the start — TradingView convention for retracements
   return levels.map((lv) => ({ level: lv, price: p1 - (p1 - p0) * lv }));
@@ -393,6 +420,10 @@ export function distToSegment(px, py, x1, y1, x2, y2) {
 /** Hit-test a drawing in screen coordinates. `pts` = projected anchor points [{x,y}], `w` = pane width.
  *  Returns {part: "handle", index} | {part: "body"} | null. */
 export function hitTest(type, pts, px, py, w, tol = 6) {
+  if (type === "pen") {                                      // a freehand stroke moves as a whole (no point handles)
+    for (let i = 0; i + 1 < pts.length; i++) if (distToSegment(px, py, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) <= tol) return { part: "body" };
+    return null;
+  }
   for (let i = 0; i < pts.length; i++) if (Math.hypot(px - pts[i].x, py - pts[i].y) <= tol + 2) return { part: "handle", index: i };
   const near = (x1, y1, x2, y2) => distToSegment(px, py, x1, y1, x2, y2) <= tol;
   const [a, b] = pts;
@@ -405,12 +436,24 @@ export function hitTest(type, pts, px, py, w, tol = 6) {
       const ex = b.x >= a.x ? w : 0;
       return near(a.x, a.y, ex, a.y + k * (ex - a.x)) ? { part: "body" } : null;
     }
-    case "rect": case "fib": case "rr": case "frvp": {
+    case "fib": {
+      // levels run from the end of the drag (0) past its start (1) up to 4× the swing — hit anywhere in that band
+      if (near(a.x, a.y, b.x, b.y)) return { part: "body" };
+      const y4 = b.y + (a.y - b.y) * 4, x1 = Math.min(a.x, b.x);
+      return px >= x1 - tol && px <= w + tol && py >= Math.min(b.y, y4) - tol && py <= Math.max(b.y, y4) + tol ? { part: "body" } : null;
+    }
+    case "rect": case "rr": case "frvp": {
       const box = type === "rect" || type === "frvp";
       const x1 = Math.min(a.x, b.x), x2 = box ? Math.max(a.x, b.x) : Math.max(a.x, b.x, a.x + 1);
       const y1 = Math.min(a.y, b.y), y2 = Math.max(a.y, b.y);
       const inside = px >= x1 - tol && px <= (box ? x2 : w) + tol && py >= y1 - tol && py <= y2 + tol;
       return inside ? { part: "body" } : null;
+    }
+    case "fibext": {
+      // the dashed swing, or anywhere in the band of levels to the right of its end (levels are linear in pixels)
+      if (near(a.x, a.y, b.x, b.y)) return { part: "body" };
+      const y4 = b.y + (b.y - a.y) * 4;
+      return px >= b.x - tol && px <= w + tol && py >= Math.min(b.y, y4) - tol && py <= Math.max(b.y, y4) + tol ? { part: "body" } : null;
     }
     case "text": return Math.abs(px - a.x) < 40 && Math.abs(py - a.y) < 12 ? { part: "body" } : null;
     case "cyclic": case "timecycles": case "sine": {

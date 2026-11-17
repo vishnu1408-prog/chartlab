@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Strategy Builder</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><path d='M2 12l4-6h4l4 6' fill='none' stroke='%2326a69a' stroke-width='1.6'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 12px 16px 40px; }
+    .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+    h1 { font-size: 20px; margin: 0 8px 0 0; } .grow { flex: 1; } .dim { color: var(--dim); } a { color: #7aa7ff; }
+    input, select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 7px; font: inherit; }
+    button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 10px; cursor: pointer; font: inherit; }
+    button.pri { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+    .chips button { border-radius: 14px; padding: 4px 10px; font-size: 12px; }
+    .chips button.debit { border-color: #26a69a88; } .chips button.credit { border-color: #ef535088; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 12px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+    .card h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    th { color: var(--dim); font-weight: 500; } th:first-child, td:first-child { text-align: left; }
+    .sbtn { width: 52px; font-weight: 600; } .sbtn.BUY { color: var(--up); border-color: var(--up); } .sbtn.SELL { color: var(--down); border-color: var(--down); }
+    .up { color: var(--up); } .down { color: var(--down); }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+    .kpi { background: var(--panel2); border-radius: 6px; padding: 6px 8px; }
+    .kpi b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; } .kpi span { color: var(--dim); font-size: 11px; }
+    svg { width: 100%; height: 340px; display: block; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+    .warn { background: #ef535022; border: 1px solid #ef535066; border-radius: 6px; padding: 6px 8px; font-size: 12px; margin-top: 8px; }
+    .msg { font-size: 13px; margin-top: 6px; } .x { color: var(--dim); border: 0; background: none; padding: 0 4px; }
+    textarea { width: 100%; box-sizing: border-box; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px; font: inherit; min-height: 48px; }
+    .need { border-color: #ffb74d !important; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>🧩 Option strategy builder <span class="dim" style="font-size:13px">(paper)</span></h1>
+    <select id="sym"></select>
+    <select id="exp"></select>
+    <span class="dim" id="spot"></span>
+    <span class="grow"></span>
+    <a href="oi.html">📊 OI</a> <a href="/">← Chart</a>
+  </div>
+  <div class="row">
+    <span class="dim">Template</span>
+    <label class="dim">wing <input id="wing" type="number" min="1" max="20" value="2" style="width:52px"> strikes</label>
+    <label class="dim">lots <input id="lots" type="number" min="1" max="10" value="1" style="width:52px"></label>
+  </div>
+  <div class="chips" id="tpl"></div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h3>Payoff <span class="dim" id="when" style="font-weight:400"></span></h3>
+        <svg id="chart"></svg>
+        <div class="row" style="font-size:12px">
+          <span><span style="color:#2962ff">━</span> at expiry</span>
+          <span><span style="color:#ffb74d">━</span> today<span id="dlab"></span></span>
+          <span class="grow"></span>
+          <label class="dim">days ahead <input id="days" type="range" min="0" max="0" step="0.5" value="0" style="vertical-align:middle"></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Legs</h3>
+        <table id="legs"></table>
+        <div class="row"><button id="add">+ Add leg</button><span class="dim" style="font-size:12px">Bought legs fill at the ask, sold legs at the bid.</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Risk</h3>
+        <div class="kpis" id="kpis"></div>
+        <div id="warn"></div>
+      </div>
+      <div class="card">
+        <h3>Paper trade this</h3>
+        <div class="row">
+          <label class="dim">Stop ₹ <input id="stop" type="number" min="0" step="100" style="width:90px" placeholder="loss"></label>
+          <label class="dim">Target ₹ <input id="target" type="number" min="0" step="100" style="width:90px" placeholder="profit"></label>
+        </div>
+        <textarea id="note" placeholder="Why this trade? (required) — e.g. IV high before event, expect range 22,900–23,200"></textarea>
+        <div class="row"><button class="pri" id="go">Paper trade</button><span class="dim" style="font-size:12px">Exits together at the ₹ stop / target on the
+          whole strategy, or at square-off (15:15 NSE / 23:00 MCX).</span></div>
+        <div class="msg" id="msg"></div>
+      </div>
+      <div class="card">
+        <h3>Open strategies</h3>
+        <div id="open" class="dim">—</div>
+      </div>
+    </div>
+  </div>
+  <p class="dim" style="font-size:12px">"Today" uses Black's formula with each leg's own IV (from its mid price). Probability of profit assumes the price ends
+    lognormal at today's ATM IV — a rough guide, not a forecast. Margin for sold options is an estimate (limited risk: worst-case buy-back
+    cost; unlimited: a SPAN-like share of the underlying) — the broker's figure is the real one. Paper only: nothing is sent to Angel.</p>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const num = (v, d = 0) => (v == null || !isFinite(v) ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d, minimumFractionDigits: d }));
+  const rs = (v) => (v == null ? "—" : `${v < 0 ? "−" : ""}₹${num(Math.abs(v))}`);
+  const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
+  const BASE = ["NIFTY 50", "SENSEX", "MCX CRUDEOIL", "MCX NATURALGAS"];
+  // strikes relative to ATM in "wing" units (w); k: 0 = ATM
+  const TPL = {
+    "Long straddle": { c: "debit", legs: (w) => [["BUY", "CE", 0], ["BUY", "PE", 0]] },
+    "Short straddle": { c: "credit", legs: (w) => [["SELL", "CE", 0], ["SELL", "PE", 0]] },
+    "Long strangle": { c: "debit", legs: (w) => [["BUY", "CE", w], ["BUY", "PE", -w]] },
+    "Short strangle": { c: "credit", legs: (w) => [["SELL", "CE", w], ["SELL", "PE", -w]] },
+    "Bull call spread": { c: "debit", legs: (w) => [["BUY", "CE", 0], ["SELL", "CE", w]] },
+    "Bear put spread": { c: "debit", legs: (w) => [["BUY", "PE", 0], ["SELL", "PE", -w]] },
+    "Bull put spread": { c: "credit", legs: (w) => [["SELL", "PE", 0], ["BUY", "PE", -w]] },
+    "Bear call spread": { c: "credit", legs: (w) => [["SELL", "CE", 0], ["BUY", "CE", w]] },
+    "Iron condor": { c: "credit", legs: (w) => [["BUY", "PE", -2 * w], ["SELL", "PE", -w], ["SELL", "CE", w], ["BUY", "CE", 2 * w]] },
+    "Iron fly": { c: "credit", legs: (w) => [["BUY", "PE", -w], ["SELL", "PE", 0], ["SELL", "CE", 0], ["BUY", "CE", w]] },
+  };
+  let info = null, legs = [], last = null, name = "Custom", qTimer = null, busy = false;
+
+  async function init() {
+    let st = [];
+    try { st = (await (await fetch("/api/paper/stocks")).json()).stocks || []; } catch (e) {}
+    $("sym").innerHTML = BASE.map((s) => `<option>${esc(s)}</option>`).join("") +
+      `<optgroup label="F&O stocks">${st.map((s) => `<option>${esc(s)}</option>`).join("")}</optgroup>`;
+    const u = new URLSearchParams(location.search).get("symbol");
+    if (u) $("sym").value = u;
+    $("tpl").innerHTML = Object.entries(TPL).map(([k, v]) => `<button class="${v.c}" data-t="${esc(k)}">${esc(k)}</button>`).join("");
+    await loadContracts();
+    useTemplate("Iron condor");
+    loadOpen();
+    setInterval(loadOpen, 5000);
+    setInterval(() => legs.length && requote(), 5000);
+  }
+
+  async function loadContracts(expiry) {
+    const qs = new URLSearchParams({ symbol: $("sym").value, ...(expiry ? { expiry } : {}) });
+    const r = await fetch(`/api/paper/contracts?${qs}`);
+    info = await r.json();
+    if (!r.ok || info.error) { $("spot").textContent = info.error || info.detail || "no contracts"; info = null; return; }
+    $("exp").innerHTML = info.expiries.slice(0, 8).map((e) => `<option ${e === info.expiry ? "selected" : ""}>${e}</option>`).join("");
+    $("spot").textContent = `${num(info.spot, 2)} · lot ${info.lot} · ATM ${num(info.atm)}`;
+    const days = Math.max(0, Math.floor((new Date(info.expiry) - new Date(new Date().toDateString())) / 864e5));
+    $("days").max = days; $("days").value = 0;
+  }
+
+  function strikeAt(off) {
+    const ks = info.strikes, i0 = ks.indexOf(info.atm);
+    return ks[Math.max(0, Math.min(ks.length - 1, i0 + off))];
+  }
+  function useTemplate(t) {
+    if (!info) return;
+    const w = Math.max(1, +$("wing").value || 1), lots = Math.max(1, +$("lots").value || 1);
+    name = t;
+    legs = TPL[t].legs(w).map(([side, type, off]) => ({ side, type, strike: strikeAt(off), lots }));
+    [...$("tpl").children].forEach((b) => b.style.background = b.dataset.t === t ? "#2962ff33" : "");
+    renderLegs(); requote();
+  }
+
+  function renderLegs() {
+    const opts = (k) => info.strikes.map((s) => `<option ${s === k ? "selected" : ""}>${s}</option>`).join("");
+    const by = Object.fromEntries((last?.legs || []).map((l) => [`${l.strike}${l.type}`, l]));
+    $("legs").innerHTML = `<tr><th>Side</th><th>Type</th><th>Strike</th><th>Lots</th><th>Bid / Ask</th><th>Fill</th><th>IV</th><th></th></tr>` +
+      legs.map((l, i) => { const q = by[`${l.strike}${l.type}`] || {};
+        return `<tr data-i="${i}"><td><button class="sbtn ${l.side}" data-a="side">${l.side}</button></td>
+        <td><select data-a="type"><option ${l.type === "CE" ? "selected" : ""}>CE</option><option ${l.type === "PE" ? "selected" : ""}>PE</option></select></td>
+        <td><select data-a="strike">${opts(l.strike)}</select></td>
+        <td><input data-a="lots" type="number" min="1" max="10" value="${l.lots}" style="width:48px"></td>
+        <td class="dim">${num(q.bid, 2)} / ${num(q.ask, 2)}</td><td>${num(q.price, 2)}</td><td class="dim">${q.iv ? num(q.iv, 1) + "%" : "—"}</td>
+        <td><button class="x" data-a="del" title="remove">✕</button></td></tr>`; }).join("");
+  }
+
+  $("legs").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const i = +b.closest("tr").dataset.i;
+    if (b.dataset.a === "side") legs[i].side = legs[i].side === "BUY" ? "SELL" : "BUY";
+    if (b.dataset.a === "del") legs.splice(i, 1);
+    name = "Custom"; renderLegs(); requote();
+  });
+  $("legs").addEventListener("change", (e) => {
+    const el = e.target, i = +el.closest("tr").dataset.i, a = el.dataset.a;
+    if (a === "type") legs[i].type = el.value;
+    if (a === "strike") legs[i].strike = +el.value;
+    if (a === "lots") legs[i].lots = Math.max(1, Math.min(10, +el.value || 1));
+    name = "Custom"; requote();
+  });
+  $("add").onclick = () => { if (!info || legs.length >= 6) return; legs.push({ side: "BUY", type: "CE", strike: info.atm, lots: +$("lots").value || 1 }); name = "Custom"; renderLegs(); requote(); };
+  $("tpl").onclick = (e) => { const b = e.target.closest("button"); if (b) useTemplate(b.dataset.t); };
+  $("sym").onchange = async () => { await loadContracts(); useTemplate(TPL[name] ? name : "Iron condor"); };
+  $("exp").onchange = async () => { await loadContracts($("exp").value); useTemplate(TPL[name] ? name : "Iron condor"); };
+  $("wing").onchange = $("lots").onchange = () => TPL[name] && useTemplate(name);
+  $("days").oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(requote, 150); };
+
+  async function requote() {
+    if (!info || !legs.length || busy) { if (!legs.length) { last = null; draw(); kpis(); } return; }
+    busy = true;
+    try {
+      const r = await fetch("/api/strategy/quote", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: info.symbol, expiry: info.expiry, legs, days_ahead: +$("days").value }) });
+      const d = await r.json();
+      if (d.error || !r.ok) { $("warn").innerHTML = `<div class="warn">${esc(d.error || d.detail)}</div>`; last = null; }
+      else { last = d; $("spot").textContent = `${num(d.spot, 2)} · lot ${info.lot} · ATM IV ${num(d.atm_iv, 1)}% · ${num(d.T_days, 1)} days to expiry`; }
+    } catch (e) { last = null; }
+    busy = false;
+    renderLegs(); kpis(); draw();
+  }
+
+  function kpis() {
+    if (!last) { $("kpis").innerHTML = ""; return; }
+    const m = last.metrics, g = last.greeks;
+    const k = (l, v, c = "") => `<div class="kpi"><span>${l}</span><b class="${c}">${v}</b></div>`;
+    $("kpis").innerHTML =
+      k(m.net_premium >= 0 ? "Net credit" : "Net debit", rs(Math.abs(m.net_premium)), m.net_premium >= 0 ? "up" : "") +
+      k("Max profit", m.max_profit == null ? "Unlimited" : rs(m.max_profit), "up") +
+      k("Max loss", m.max_loss == null ? "Unlimited" : rs(m.max_loss), "down") +
+      k("Breakeven", m.breakevens.length ? m.breakevens.map((x) => num(x)).join(" / ") : "—") +
+      k("Prob. of profit", m.pop == null ? "—" : `${Math.round(m.pop * 100)}%`) +
+      k("Margin (est.)", rs(last.margin)) +
+      k("Reward : risk", m.max_profit != null && m.max_loss ? `${(m.max_profit / -m.max_loss).toFixed(2)}` : "—") +
+      k("Now (mark)", rs(last.now_pnl), cls(last.now_pnl)) +
+      k("Delta", `${num(g.delta, 1)}`, "") + k("Theta / day", rs(g.theta), cls(g.theta)) + k("Vega / IV pt", rs(g.vega));
+    let w = "";
+    if (m.max_loss == null || last.basis.includes("NOT limited"))
+      w += `<div class="warn">⚠ Risk is NOT limited: a sold option is uncovered. ${esc(last.basis)}. With ₹1.5 lakh capital this can wipe out the account on a big move — prefer the spread / iron versions.</div>`;
+    else w += `<div class="dim" style="font-size:12px;margin-top:6px">Margin: ${esc(last.basis)}.</div>`;
+    $("warn").innerHTML = w;
+    if (!$("stop").value && m.max_loss != null) $("stop").placeholder = `max ${num(-m.max_loss)}`;
+  }
+
+  function draw() {
+    const svg = $("chart"), W = svg.clientWidth || 700, H = 340, pl = 64, pr = 10, pt = 10, pb = 26;
+    if (!last) { svg.innerHTML = `<text x="20" y="40" fill="#888">${legs.length ? "waiting for live quotes…" : "add a leg or pick a template"}</text>`; return; }
+    const c = last.curve, xs = c.x, ys = c.expiry.concat(c.today);
+    let y0 = Math.min(...ys), y1 = Math.max(...ys); const pad = (y1 - y0) * 0.08 || 100; y0 -= pad; y1 += pad;
+    const X = (v) => pl + (v - xs[0]) / (xs[xs.length - 1] - xs[0]) * (W - pl - pr);
+    const Y = (v) => pt + (y1 - v) / (y1 - y0) * (H - pt - pb);
+    const path = (arr) => arr.map((v, i) => `${i ? "L" : "M"}${X(xs[i]).toFixed(1)},${Y(v).toFixed(1)}`).join("");
+    const zy = Y(0);
+    // profit / loss shading under the expiry line
+    const area = `M${X(xs[0])},${zy}` + c.expiry.map((v, i) => `L${X(xs[i]).toFixed(1)},${Y(v).toFixed(1)}`).join("") + `L${X(xs[xs.length - 1])},${zy}Z`;
+    let h = `<defs><clipPath id="cu"><rect x="0" y="0" width="${W}" height="${zy}"/></clipPath><clipPath id="cd"><rect x="0" y="${zy}" width="${W}" height="${H}"/></clipPath></defs>`;
+    h += `<path d="${area}" fill="#26a69a33" clip-path="url(#cu)"/><path d="${area}" fill="#ef535033" clip-path="url(#cd)"/>`;
+    for (let i = 0; i <= 5; i++) { const v = y0 + (y1 - y0) * i / 5;
+      h += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="#2a2e39"/><text x="${pl - 6}" y="${Y(v) + 4}" fill="#888" font-size="11" text-anchor="end">${rs(v)}</text>`; }
+    for (let i = 0; i <= 6; i++) { const v = xs[0] + (xs[xs.length - 1] - xs[0]) * i / 6;
+      h += `<text x="${X(v)}" y="${H - 8}" fill="#888" font-size="11" text-anchor="middle">${num(v)}</text>`; }
+    h += `<line x1="${pl}" x2="${W - pr}" y1="${zy}" y2="${zy}" stroke="#666"/>`;
+    for (const b of last.metrics.breakevens) if (b >= xs[0] && b <= xs[xs.length - 1])
+      h += `<line x1="${X(b)}" x2="${X(b)}" y1="${pt}" y2="${H - pb}" stroke="#888" stroke-dasharray="3 3"/><text x="${X(b) + 3}" y="${pt + 12}" fill="#aaa" font-size="11">BE ${num(b)}</text>`;
+    h += `<line x1="${X(last.spot)}" x2="${X(last.spot)}" y1="${pt}" y2="${H - pb}" stroke="#ffeb3b88"/><text x="${X(last.spot) + 3}" y="${H - pb - 4}" fill="#ffeb3b" font-size="11">spot ${num(last.spot)}</text>`;
+    h += `<path d="${path(c.today)}" fill="none" stroke="#ffb74d" stroke-width="1.6"/><path d="${path(c.expiry)}" fill="none" stroke="#2962ff" stroke-width="2"/>`;
+    h += `<g id="hov" style="display:none"><line id="hl" y1="${pt}" y2="${H - pb}" stroke="#aaa"/><rect id="hb" rx="4" fill="#1e222d" stroke="#444"/><text id="ht" fill="#ddd" font-size="12"></text></g>`;
+    svg.innerHTML = h;
+    svg.onmousemove = (e) => {
+      const r = svg.getBoundingClientRect(), mx = e.clientX - r.left;
+      let i = 0; for (let j = 0; j < xs.length; j++) if (Math.abs(X(xs[j]) - mx) < Math.abs(X(xs[i]) - mx)) i = j;
+      const g = svg.querySelector("#hov"); g.style.display = "";
+      svg.querySelector("#hl").setAttribute("x1", X(xs[i])); svg.querySelector("#hl").setAttribute("x2", X(xs[i]));
+      const t = svg.querySelector("#ht"), tx = Math.min(X(xs[i]) + 8, W - 190);
+      t.innerHTML = `<tspan x="${tx + 6}" y="${pt + 30}">at ${num(xs[i])} (${((xs[i] / last.spot - 1) * 100).toFixed(1)}%)</tspan>` +
+        `<tspan x="${tx + 6}" dy="16" fill="#7aa7ff">expiry ${rs(c.expiry[i])}</tspan><tspan x="${tx + 6}" dy="16" fill="#ffb74d">today ${rs(c.today[i])}</tspan>`;
+      const hb = svg.querySelector("#hb"); hb.setAttribute("x", tx); hb.setAttribute("y", pt + 16); hb.setAttribute("width", 180); hb.setAttribute("height", 56);
+    };
+    svg.onmouseleave = () => { const g = svg.querySelector("#hov"); if (g) g.style.display = "none"; };
+    const d = +$("days").value; $("dlab").textContent = d ? ` (+${d} day${d > 1 ? "s" : ""})` : "";
+    $("when").textContent = `· ${last.symbol} ${last.expiry} · ${last.at.slice(11, 16)}`;
+  }
+
+  $("go").onclick = async () => {
+    const note = $("note").value.trim();
+    $("note").classList.toggle("need", note.length < 3);
+    if (note.length < 3) { $("msg").innerHTML = `<span class="down">Write why you are taking this trade.</span>`; return; }
+    if (!info || !legs.length) return;
+    if (last && (last.metrics.max_loss == null || last.basis.includes("NOT limited")) &&
+        !confirmBox()) return;
+    $("go").disabled = true; $("msg").textContent = "placing…";
+    try {
+      const r = await fetch("/api/strategy/order", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol: info.symbol, expiry: info.expiry, legs, name, note, stop_rs: +$("stop").value || null, target_rs: +$("target").value || null }) });
+      const d = await r.json();
+      $("msg").innerHTML = d.status === "filled" ? `<span class="up">✓ ${esc(d.group.name)} placed (${d.group.legs.length} legs) — see Open strategies and the 💼 Paper tab.</span>`
+        : `<span class="down">Rejected: ${esc(d.reason || d.detail || "error")}</span>`;
+      if (d.status === "filled") { $("note").value = ""; loadOpen(); }
+    } catch (e) { $("msg").innerHTML = `<span class="down">error</span>`; }
+    $("go").disabled = false;
+  };
+  // in-page confirmation for unlimited-risk trades (no browser dialogs)
+  let armed = false;
+  function confirmBox() {
+    if (armed) { armed = false; return true; }
+    armed = true; $("msg").innerHTML = `<span class="down">Unlimited risk — press “Paper trade” again within 5 s to confirm.</span>`;
+    setTimeout(() => { armed = false; }, 5000);
+    return false;
+  }
+
+  async function loadOpen() {
+    try {
+      const d = await (await fetch("/api/paper?account=manual")).json();
+      const gs = (d.groups || []);
+      const open = gs.filter((g) => g.open), done = gs.filter((g) => !g.open).slice(-5).reverse();
+      $("open").innerHTML = (open.length ? open.map((g) => `<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--border);padding-bottom:6px">
+          <div><b>${esc(g.name)}</b> <span class="dim">${esc(g.symbol)} · ${esc(g.opened.slice(11, 16))}</span><br>
+          <span class="dim" style="font-size:12px">${g.legs.map((l) => `${l.side === "BUY" ? "+" : "−"}${l.lots} ${esc(l.tsym)}`).join(" · ")}</span><br>
+          <span class="dim" style="font-size:12px">margin ${rs(g.margin)}${g.stop_rs ? ` · stop −₹${num(g.stop_rs)}` : ""}${g.target_rs ? ` · target +₹${num(g.target_rs)}` : ""}</span></div>
+          <div style="text-align:right"><b class="${cls(g.pnl)}">${g.pnl == null ? "—" : rs(g.pnl)}</b><br><button data-g="${esc(g.id)}">Exit strategy</button></div></div>`).join("")
+        : `<span class="dim">none open</span>`) +
+        (done.length ? `<div style="margin-top:8px;font-size:12px" class="dim">Closed: ${done.map((g) => `${esc(g.name)} <span class="${cls(g.net)}">${rs(g.net)}</span>`).join(" · ")}</div>` : "");
+      $("margin_info") && ($("margin_info").textContent = rs(d.margin));
+    } catch (e) {}
+  }
+  $("open").onclick = async (e) => {
+    const b = e.target.closest("button[data-g]"); if (!b) return;
+    b.disabled = true;
+    const d = await (await fetch(`/api/strategy/exit/${b.dataset.g}`, { method: "POST" })).json();
+    $("msg").innerHTML = d.status === "filled" ? `<span>Strategy closed.</span>` : `<span class="down">${esc(d.reason || "could not exit")}</span>`;
+    loadOpen();
+  };
+  window.addEventListener("resize", draw);
+  init();
+})();
+</script>
+</body>
+</html>

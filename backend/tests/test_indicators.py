@@ -101,7 +101,8 @@ def check_no_lookahead(ind, df, cut_frac=0.6, params=None):
 
 
 @pytest.mark.parametrize("ind_id", ["sma", "ema", "bb", "rsi", "macd", "supertrend", "vwap", "ema_cross", "sideways",
-                                    "pivots", "orb", "vprofile", "harmonic", "fakeout", "gann_drive", "morning_edge", "daily_plan"])
+                                    "pivots", "orb", "vprofile", "harmonic", "fakeout", "gann_drive", "morning_edge", "daily_plan",
+                                    "wyckoff"])
 @pytest.mark.parametrize("tf", ["5", "15"])
 def test_every_builtin_respects_the_replay_contract(ind_id, tf):
     sym = "TESTSTOCK" if ind_id == "vwap" else "NIFTY 50"
@@ -221,3 +222,118 @@ def test_gann_drive_ema_filter_trades_a_subset_and_keeps_the_replay_contract():
     assert n(filt) <= n(plain)                                               # the filter only removes trades
     assert "EMA 9/21" in filt.info["backtest"]
     check_no_lookahead(ind, df, params={"ema_filter": True})
+
+
+def test_ng_fvg_trades_a_bullish_gap_retest_and_holds_to_2300():
+    import numpy as np
+    import pandas as pd
+    from app.indicators.builtin.ng_fvg import fvg_trades
+    idx = pd.date_range("2026-10-19 09:00", "2026-10-19 23:25", freq="5min")
+    n = len(idx)
+    o = np.full(n, 300.0); h = o + 0.5; l = o - 0.5; c = o.copy()
+    k = 12                                                   # 10:00: displacement candle k-1, gap above bar k-2
+    o[k - 1], c[k - 1], h[k - 1], l[k - 1] = 300.0, 306.0, 306.2, 299.9
+    o[k:], c[k:], h[k:], l[k:] = 306.5, 306.5, 307.0, 302.0  # bar k low 302 > high[k-2] 300.5 → gap 300.5–302
+    l[k + 1:] = 303.0
+    l[k + 3] = 301.8                                         # pull-back into the gap → limit fill at 302
+    h[k + 10:], c[k + 10:], o[k + 10:] = 315.0, 314.0, 314.0
+    df = pd.DataFrame({"open": o, "high": h, "low": l, "close": c}, index=idx)
+    gaps, tr = fvg_trades(df, cost_pct=0.0)
+    assert any(g["side"] == 1 and g["bot"] == 300.5 and g["top"] == 302.0 for g in gaps)
+    t = tr[0]
+    assert t["side"] == 1 and t["entry"] == 302.0 and t["stop"] < 300.5 and t["why"] == "23:00"
+    assert df.index[t["exit_i"]] == pd.Timestamp("2026-10-19 23:00") and t["pts"] == 314.0 - 302.0
+
+
+def test_mid_level_call_on_wick_touch_from_above():
+    import numpy as np
+    import pandas as pd
+    from app.indicators.builtin.mid_level import mid_trades
+    rows = []
+    for d, (lo, hi) in (("2026-10-22", (22217.0, 22612.0)), ("2026-10-23", (None, None))):
+        for k in range(75):
+            t = pd.Timestamp(d) + pd.Timedelta(minutes=555 + 5 * k)
+            if lo is not None:                               # prev day: range 22217–22612 → level 22414.5
+                p = lo if k == 10 else hi if k == 50 else 22400.0
+                rows.append((t, p, max(p, 22400.0), min(p, 22400.0), p))
+            elif k == 2:                                     # 09:25 candle: opens above, wick to 22410, closes above
+                rows.append((t, 22430.0, 22435.0, 22410.0, 22428.0))
+            elif k > 2:
+                rows.append((t, 22430.0 + 4 * (k - 3), 22432.0 + 4 * (k - 3), 22428.0 + 4 * (k - 3), 22431.0 + 4 * (k - 3)))
+            else:
+                rows.append((t, 22440.0, 22445.0, 22435.0, 22440.0))
+    df = pd.DataFrame(rows, columns=["t", "open", "high", "low", "close"]).set_index("t")
+    lv, tr = mid_trades(df, None, cost=0.0)
+    assert round(lv[pd.Timestamp("2026-10-23")][2], 1) == 22414.5
+    t = tr[0]
+    assert t["side"] == 1 and t["entry_t"] == pd.Timestamp("2026-10-23 09:30") and t["entry"] == 22430.0
+    assert t["why"] == "target" and t["gross"] == 30.0
+
+
+def test_fib_day_levels_from_the_previous_day():
+    import pandas as pd
+    from app.indicators.builtin.fib_day import anchors, fib_levels
+    idx = pd.date_range("2026-10-26 09:15", periods=75, freq="5min").append(pd.date_range("2026-10-27 09:15", periods=75, freq="5min"))
+    import numpy as np
+    p = np.r_[np.linspace(22200, 22600, 75), np.full(75, 22500.0)]
+    df = pd.DataFrame({"open": p, "high": p + 1, "low": p - 1, "close": p}, index=idx)
+    (d, hi, lo, up, a, b), = anchors(df, "Previous day", 555)
+    assert d == pd.Timestamp("2026-10-27") and hi == 22601 and lo == 22199 and up and a == 75 and b == 149
+    lv = dict(fib_levels(hi, lo, up, False))
+    assert lv[0.0] == 22601 and lv[1.0] == 22199 and round(lv[0.618], 2) == round(22601 - 0.618 * 402, 2)
+    (_, h1, l1, _, a1, _), *_ = anchors(df, "First hour", 555)
+    assert a1 == 12 and h1 == float(df.high.iloc[:12].max())          # drawn only after the first hour
+
+
+def test_wyckoff_pure_helpers():
+    from app.indicators.builtin import wyckoff as W
+    h = np.array([1, 2, 3, 5, 3, 2, 1, 4, 4, 2, 1.0])
+    ph = W.pivots(h, 2, True)
+    assert ph[5] == 5 and np.isnan(ph[:5]).all()                     # pivot at bar 3 is known 2 bars later (bar 5)
+    assert ph[9] == 4 and np.isnan(ph[10])                           # equal highs: the first one (bar 7) is the pivot
+    assert W.pivots(-h, 2, False)[5] == -5
+    hh, ll, cc = np.arange(20.0) + 2, np.arange(20.0), np.arange(20.0) + 1
+    atr = W.pine_atr(hh, ll, cc, 14)
+    assert np.isnan(atr[:13]).all() and atr[13] == 2.0 and abs(atr[19] - 2.0) < 1e-12
+    assert W.robust_edge(10.0, 11.0, 12.0, 10.5, True) == 11.0 and W.robust_edge(NA := float("nan"), NA, NA, 10.5, True) == 10.5
+    assert W.phase_b_min_bars(4, 2.0) == 30 and W.phase_b_min_bars(10, 9.0) == 60
+    assert W.validation_score(40, True, 3.0, 2, 1, 2, True, 3.0, True, True, True, False) == 100
+    assert W.structure_confidence(True, True, True, True, False, False, False, False) == 50
+
+
+def test_wyckoff_runs_and_reveals_events_only_when_known():
+    from app.indicators.builtin import wyckoff as W
+    df = store.bars("NIFTY 50", "5")
+    t0 = time.time()
+    r = W.run_engine(df)
+    assert time.time() - t0 < 10
+    assert r["campaigns"], "synthetic data should seed at least one climax"
+    for c in r["campaigns"]:
+        assert c["events"][0]["kind"] == "CL" and c["stop"] in (1, -1)
+        for e in c["events"]:
+            assert e["known"] >= e["bar"]
+    for e in r["entries"]:
+        assert e["known"] >= e["bar"] and e["dir"] in (1, -1)
+    ind = registry.get("wyckoff")
+    for trig in ind.params[1].options:
+        out = ind.compute(df, **ind.resolve({"min_phase": "A", "trigger": trig, "strictness": "Aggressive"}))
+        assert out.info["structure"] and all(m["visible_from"] >= m["time"] for m in out.markers)
+        assert all(s["visible_from"] >= min(p["time"] for p in s["points"]) for s in out.shapes)
+    check_no_lookahead(ind, df, 0.55, {"min_phase": "A", "strictness": "Aggressive", "trigger": "SOS / SOW"})
+
+
+def test_wyckoff_tally_trades_next_open_with_stop_first_and_square_off():
+    from app.indicators.builtin.wyckoff import trade_entries
+    idx = pd.date_range("2026-10-26 09:15", periods=75, freq="5min")
+    p = np.full(75, 22000.0)
+    df = pd.DataFrame({"open": p, "high": p + 2, "low": p - 2, "close": p, "volume": 0.0}, index=idx)
+    df.iloc[5, df.columns.get_loc("open")] = 22001.0                 # entry bar (signal on bar 4)
+    df.iloc[8, df.columns.get_loc("high")] = 22040.0                 # target 22031 hit
+    tr, = trade_entries(df, [{"known": 4, "dir": 1}], None, 30, 30, cost=0.0)
+    assert tr["entry_t"] == idx[5] and tr["entry"] == 22001.0 and tr["why"] == "target" and tr["gross"] == 30.0
+    df.iloc[8, df.columns.get_loc("low")] = 21960.0                  # both in one bar → stop first
+    tr, = trade_entries(df, [{"known": 4, "dir": 1}], None, 30, 30, cost=0.0)
+    assert tr["why"] == "stop" and tr["gross"] == -30.0
+    tr, = trade_entries(df, [{"known": 60, "dir": -1}], None, 300, 300, cost=0.0)
+    assert tr["why"] == "15:15" and tr["exit_t"] == pd.Timestamp("2026-10-26 15:15")
+    assert trade_entries(df, [{"known": 74, "dir": 1}], None) == []   # no next bar → no trade

@@ -539,10 +539,8 @@ def signals() -> pd.DataFrame:
     h = DIR / "history.csv"
     if h.exists():
         out = pd.read_csv(h, parse_dates=[0], index_col=0)
-    live = {}
-    for f in sorted((DIR / "signals").glob("*.json")) if (DIR / "signals").exists() else []:
-        s = json.loads(f.read_text())
-        live[pd.Timestamp(s["day"])] = {"pred": s["pred"], "source": "live"}
+    from . import db
+    live = {pd.Timestamp(r["day"]): {"pred": r["pred"], "source": "live"} for r in db.edge_all()}
     if live:
         out = pd.concat([out[~out.index.isin(list(live))], pd.DataFrame(live).T]).sort_index()
     out["pred"] = pd.to_numeric(out.pred, errors="coerce")
@@ -589,8 +587,10 @@ def e2_legs(m1_day: pd.DataFrame, dirn: int, stop: float = STOP, book: float = B
 
 # ───────────────────────────── live: 09:45 decision ─────────────────────────────
 def vix_live(now: dt.datetime) -> dict:
-    """VIX the way the training data has it: the 09:15 one-minute candle's open and yesterday's daily close (Angel
-    candles); Angel's quote as a fallback (its 'open' is the official open, which often equals yesterday's close)."""
+    """VIX the way the training data has it: the 09:15 one-minute candle's open and the LAST ONE-MINUTE CLOSE of the
+    previous session. (NSE's official VIX close — Angel's daily close — is what the next day opens at, so open ÷
+    official close is always 1; the history in training used the last minute's close, e.g. 8 Oct 2026: last minute
+    15.2425, official 15.28, next open 15.28 → +0.25 %.) Daily close / Angel quote only as fallbacks."""
     out = {}
     d0 = now.replace(hour=9, minute=15, second=0, microsecond=0)
     try:
@@ -601,7 +601,23 @@ def vix_live(now: dt.datetime) -> dict:
         if len(cd):
             cd = cd[pd.DatetimeIndex(cd.index).normalize() < pd.Timestamp(now.date())]
         if len(cd):
-            out["vix_prev"] = float(cd.close.iloc[-1])
+            pday = pd.DatetimeIndex(cd.index).normalize()[-1]
+            saved = vix_close_saved()
+            if saved and saved.get("day") == str(pday.date()):   # saved last evening: no candle request at 09:45
+                out["vix_prev"], out["vix_prev_src"] = float(saved["close"]), f"last 1m {saved['at']} (saved)"
+                cd = cd.iloc[:0]
+        if len(cd):
+            a = pday + pd.Timedelta(minutes=15 * 60 + 15)
+            m1 = sources.Angel.candles("INDIA VIX", a.to_pydatetime(), (a + pd.Timedelta(minutes=16)).to_pydatetime(),
+                                       "ONE_MINUTE")
+            if len(m1):
+                m1 = m1[pd.DatetimeIndex(m1.index).normalize() == pday]
+            if len(m1):
+                out["vix_prev"] = float(m1.close.iloc[-1])
+                out["vix_prev_src"] = f"last 1m {m1.index[-1]:%H:%M}"
+            else:
+                out["vix_prev"] = float(cd.close.iloc[-1])
+                out["vix_prev_src"] = "official close (fallback)"
     except Exception as e:
         log.warning("vix candles: %s", e)
     if "vix_open" not in out or "vix_prev" not in out:
@@ -611,17 +627,45 @@ def vix_live(now: dt.datetime) -> dict:
         if q.get("open") and q.get("close"):
             out.setdefault("vix_open", float(q["open"]))
             out.setdefault("vix_prev", float(q["close"]))
+            out.setdefault("vix_prev_src", "quote (fallback)")
     return out
 
 
+def vix_close_path():
+    return DIR / "vix_close.json"
+
+
+def vix_close_saved() -> dict | None:
+    try:
+        return json.loads(vix_close_path().read_text())
+    except Exception:
+        return None
+
+
+def save_vix_close(now: dt.datetime) -> dict | None:
+    """After the close: keep today's LAST 1-minute VIX close for tomorrow's 09:45 decision (at 09:45 Angel often
+    refuses candle requests — 23 Oct 2026 fell back to the official close)."""
+    a = now.replace(hour=15, minute=15, second=0, microsecond=0)
+    m1 = sources.Angel.candles("INDIA VIX", a, a + dt.timedelta(minutes=16), "ONE_MINUTE")
+    if not len(m1):
+        return None
+    m1 = m1[pd.DatetimeIndex(m1.index).normalize() == pd.Timestamp(now.date())]
+    if not len(m1):
+        return None
+    rec = {"day": str(now.date()), "close": float(m1.close.iloc[-1]), "at": f"{m1.index[-1]:%H:%M}"}
+    vix_close_path().write_text(json.dumps(rec))
+    return rec
+
+
 def decide_today(now: dt.datetime | None = None, save: bool = True) -> dict:
-    """Build today's 09:45 row from live data, predict, save data/edge/signals/<day>.json."""
+    """Build today's 09:45 row from live data, predict, save it (SQLite table edge_signal)."""
+    from . import db
     from .sync import now_ist, latest_minutes
     now = now or now_ist()
     day = pd.Timestamp(now.date())
-    p = DIR / "signals" / f"{day.date()}.json"
-    if p.exists() and save:
-        return json.loads(p.read_text())
+    have = db.edge_get(str(day.date()))
+    if have and save:
+        return have
     M = load_model()
     if M is None:
         return {"error": "no model yet — run: docker exec chartlab python -m app.edge train"}
@@ -647,10 +691,10 @@ def decide_today(now: dt.datetime | None = None, save: bool = True) -> dict:
     out = {"day": str(day.date()), "pred": pred, "signal": sig, "strong": abs(pred) >= STRONG,
            "adr": f["_adr"], "pred_pts": pred * f["_adr"], "missing": missing, "model_used": str(used[0]),
            "features": {k: (None if not np.isfinite(float(x[k].iloc[0])) else float(x[k].iloc[0])) for k in M["meta"]["features"]},
-           "model": M["meta"]["trained_until"], "at": now.isoformat(timespec="seconds")}
+           "model": M["meta"]["trained_until"], "at": now.isoformat(timespec="seconds"),
+           "vix": {k: live.get(k) for k in ("vix_open", "vix_prev", "vix_prev_src")}}
     if save:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(out, indent=1))
+        db.edge_put(out)
     log.info("morning edge %s: pred %.3f → %s (missing %s)", day.date(), pred, sig, missing)
     return out
 
@@ -663,7 +707,7 @@ def _trading_days_back(n: int) -> list:
 def loop():
     """Background job: keep the NSE EOD files current (evenings / mornings) and make the 09:45 decision."""
     from .sync import now_ist
-    last_nse = 0.0
+    last_nse = last_vix = 0.0
     while True:
         try:
             t = now_ist()
@@ -676,13 +720,27 @@ def loop():
                 status["nse"] = update_nse(days)
                 last_nse = time.time()
                 status["state"] = "idle"
+            if t.weekday() < 5 and 15 * 60 + 35 <= m <= 21 * 60 and sources.Angel.available() and \
+                    (vix_close_saved() or {}).get("day") != str(t.date()) and time.time() - last_vix > 600:
+                last_vix = time.time()
+                try:
+                    save_vix_close(t)
+                except Exception as e:
+                    log.warning("vix close: %s", e)
             # the decision needs 09:45 breadth: only between 09:45 and 09:52 (a late start skips the day, honestly)
             if t.weekday() < 5 and 9 * 60 + 45 <= m <= 9 * 60 + 52 and sources.Angel.available():
-                if not (DIR / "signals" / f"{t.date()}.json").exists():
+                from . import db
+                if db.edge_get(str(t.date())) is None:
                     status["state"] = "deciding"
                     status["today"] = decide_today(t)
                     if "error" in status["today"]:
                         log.warning("morning edge %s: %s", t.date(), status["today"]["error"])
+                    else:
+                        try:                                 # paper-trade the signal on real option prices
+                            from . import paper
+                            paper.bot_morning_edge(status["today"])
+                        except Exception:
+                            log.exception("paper bot")
                     status["state"] = "idle"
         except Exception as e:
             log.exception("edge loop")

@@ -84,3 +84,25 @@ def test_indicator_draws_saved_signals(tmp_path):
         assert "on this chart" in out.info
     finally:
         h.unlink()
+
+
+def test_vix_prev_comes_from_last_evenings_save_without_a_minute_request(monkeypatch, tmp_path):
+    import datetime as dt
+    import pandas as pd
+    from app import edge, sources
+    monkeypatch.setattr(edge, "DIR", tmp_path)
+    asked = []
+
+    def candles(sym, a, b, iv="ONE_MINUTE", **k):
+        asked.append((iv, a))
+        if iv == "ONE_DAY":
+            return pd.DataFrame({"close": [15.9, 15.76]}, index=pd.to_datetime(["2026-10-21", "2026-10-22"]))
+        if a.hour == 15:                                      # the previous session's last minutes
+            return pd.DataFrame({"close": [15.70, 15.725]}, index=pd.to_datetime(["2026-10-22 15:28", "2026-10-22 15:29"]))
+        return pd.DataFrame({"open": [15.76]}, index=pd.to_datetime(["2026-10-23 09:15"]))
+    monkeypatch.setattr(sources.Angel, "candles", candles)
+    assert edge.save_vix_close(dt.datetime(2026, 10, 22, 15, 40)) == {"day": "2026-10-22", "close": 15.725, "at": "15:29"}
+    asked.clear()
+    v = edge.vix_live(dt.datetime(2026, 10, 23, 9, 45))
+    assert v["vix_prev"] == 15.725 and v["vix_open"] == 15.76 and "saved" in v["vix_prev_src"]
+    assert not [a for iv, a in asked if iv == "ONE_MINUTE" and a.hour == 15]     # no 09:45 request for yesterday

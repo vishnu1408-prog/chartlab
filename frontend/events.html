@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Events Calendar</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><rect x='3' y='4' width='10' height='9' rx='1' fill='none' stroke='%23ff9800' stroke-width='1.5'/><path d='M3 7h10' stroke='%23ff9800' stroke-width='1.5'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 14px 16px 40px; }
+    h1 { font-size: 20px; margin: 0 0 4px; } .dim { color: var(--dim); } a { color: #7aa7ff; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 12px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td, th { padding: 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { color: var(--dim); font-weight: 500; }
+    .day td { background: var(--panel2); font-weight: 600; }
+    .imp-High { color: #ff7043; font-weight: 600; } .imp-Medium { color: #ffb74d; }
+    input, select { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 5px 6px; }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 5px; padding: 6px 12px; cursor: pointer; }
+    button.del { background: transparent; color: var(--down); border: 1px solid var(--down); padding: 2px 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    @media (max-width: 640px) { td:nth-child(4), th:nth-child(4) { display: none; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📅 Events calendar</h1>
+  <div class="dim">Next 14 days (IST). On charts: <b>ƒx Indicators → "Events (economic calendar)"</b>. <a href="/">← Chart</a></div>
+  <div class="card"><table id="list"><tr><td class="dim">Loading…</td></tr></table></div>
+  <div class="card">
+    <b>Add your own event</b> <span class="dim">— e.g. RBI policy dates for 2026 (not built in), results days, F&amp;O ban dates</span>
+    <div class="row" style="margin-top:8px">
+      <input type="datetime-local" id="ts">
+      <input type="text" id="title" placeholder="Title, e.g. RBI policy decision" maxlength="80" style="flex:1;min-width:200px">
+      <select id="country"><option value="IN">🇮🇳 India</option><option value="USD">🇺🇸 US</option><option value="MCX">⛽ MCX</option></select>
+      <select id="impact"><option>High</option><option>Medium</option></select>
+      <button id="add">Add</button>
+    </div>
+    <table id="custom" style="margin-top:10px"></table>
+  </div>
+  <div class="dim" style="font-size:12px">Sources: ForexFactory (US &amp; global data, refreshed daily), federalreserve.gov (FOMC), built-in RBI 2022–25 and
+    Budget dates, India CPI ≈ 12th 16:00 (approximate), expiry dates from the option contract lists, EIA reports Wed / Thu 10:30 ET (approximate).</div>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const FLAG = { IN: "🇮🇳", USD: "🇺🇸", MCX: "⛽", CNY: "🇨🇳", All: "🌐" };
+  async function load() {
+    const d = await (await fetch("/api/events?days=14")).json();
+    let day = "", h = `<tr><th>Time</th><th>Event</th><th>Impact</th><th>Category</th></tr>`;
+    for (const e of d.events) {
+      const dd = new Date(e.ts + "Z").toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" });
+      if (dd !== day) { day = dd; h += `<tr class="day"><td colspan="4">${esc(dd)}</td></tr>`; }
+      h += `<tr><td>${esc(e.ts.slice(11, 16))}</td><td>${FLAG[e.country] || ""} ${esc(e.title)}${e.approx ? ' <span class="dim">(approx.)</span>' : ""}</td>
+        <td class="imp-${esc(e.impact)}">${esc(e.impact)}</td><td class="dim">${esc(e.category)}</td></tr>`;
+    }
+    $("list").innerHTML = d.events.length ? h : `<tr><td class="dim">No events in the next 14 days.</td></tr>`;
+    $("custom").innerHTML = d.custom.length ? `<tr><th>Your events</th><th></th><th></th></tr>` + d.custom.map((c) =>
+      `<tr><td>${esc(c.ts.replace("T", " "))}</td><td>${FLAG[c.country] || ""} ${esc(c.title)} <span class="dim">${esc(c.impact)}</span></td>
+       <td><button class="del" data-id="${c.id}">delete</button></td></tr>`).join("") : "";
+  }
+  $("add").onclick = async () => {
+    const ts = $("ts").value, title = $("title").value.trim();
+    if (!ts || !title) return;
+    await fetch("/api/events/custom", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ts, title, country: $("country").value, impact: $("impact").value }) });
+    $("title").value = ""; load();
+  };
+  $("custom").onclick = async (e) => {
+    const b = e.target.closest(".del"); if (!b) return;
+    await fetch(`/api/events/custom/${b.dataset.id}`, { method: "DELETE" }); load();
+  };
+  load();
+})();
+</script>
+</body>
+</html>

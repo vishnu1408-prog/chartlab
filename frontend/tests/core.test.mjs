@@ -80,6 +80,19 @@ test("paper: stop beats target inside one bar, gaps fill at the open", () => {
   assert.equal(g.exit, 110); assert.equal(g.pnl_pts, -10);
 });
 
+test("paper: a sold option — stop above the sell price, target below, premium decay is profit", () => {
+  const e = new PaperEngine();
+  e.order(-1, 65, 100, T0, { sl: 110, tp: 80 });                 // SELL CE @ 100: stop 110, target 80
+  e.lastBar = bar(0, 100, 100, 100, 100);
+  assert.equal(e.onBar(bar(1, 99, 105, 90, 95)).length, 0);
+  assert.equal(e.unrealized(95), 5 * 65);                          // premium fell 5 → seller up ₹325
+  const [t] = e.onBar(bar(2, 94, 96, 79, 81));
+  assert.equal(t.reason, "target"); assert.equal(t.exit, 80); assert.equal(t.pnl_rs, 20 * 65);
+  e.order(-1, 65, 100, bar(3).time, { sl: 110, tp: 80 });
+  const [s] = e.onBar(bar(4, 101, 112, 99, 111));                  // premium jumps through the stop
+  assert.equal(s.reason, "stop"); assert.equal(s.exit, 110); assert.equal(s.pnl_pts, -10);
+});
+
 test("paper: short P&L, averaging, reversal, costs", () => {
   const e = new PaperEngine({ costPerTrade: 40 });
   e.order(-1, 50, 200, T0);
@@ -377,4 +390,43 @@ test("MCX close follows US daylight saving: 23:30 in summer, 23:55 in winter", (
   assert.equal(mcxCloseMin(d(2026, 3, 9)), 1410);           // 2nd Sunday of March 2026 = 8 Mar
   assert.equal(mcxCloseMin(d(2026, 3, 6)), 1435);
   assert.equal(candleCloseAt(d(2026, 10, 12), "D", 540, mcxCloseMin), d(2026, 10, 12) + 1410 * 60);
+});
+
+import { optionChartName } from "../js/core.js";
+
+test("optionChartName matches the option chart symbol", () => {
+  assert.equal(optionChartName({ symbol: "NIFTY 50", expiry: "2026-10-27", strike: 22950.0, type: "CE" }), "NIFTY 27-Oct-26 22950 CE");
+  assert.equal(optionChartName({ symbol: "RELIANCE", expiry: "2026-10-27", strike: 1210, type: "PE" }), "RELIANCE 27-Oct-26 1210 PE");
+});
+
+test("pen strokes are hit on their path and move as a whole", async () => {
+  const { hitTest } = await import("../js/core.js");
+  const pts = [{ x: 10, y: 10 }, { x: 50, y: 10 }, { x: 50, y: 60 }];
+  assert.deepEqual(hitTest("pen", pts, 30, 12, 800), { part: "body" });
+  assert.deepEqual(hitTest("pen", pts, 10, 10, 800), { part: "body" });       // no single-point handles
+  assert.equal(hitTest("pen", pts, 30, 40, 800), null);
+});
+
+test("trend-based fib extension: 0 at the swing end, levels beyond it in the swing direction", async () => {
+  const { fibExtPrices, parseLevels, hitTest, FIB_EXT_LEVELS } = await import("../js/core.js");
+  assert.deepEqual(FIB_EXT_LEVELS, [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4]);
+  const up = fibExtPrices(100, 200, [0, 0.5, 1]);            // drag low → high: targets above the high
+  assert.deepEqual(up.map((x) => x.price), [200, 250, 300]);
+  const dn = fibExtPrices(24482, 24284, [0, 1]);             // drag high → low: projections below (the video's 24,086)
+  assert.deepEqual(dn.map((x) => x.price), [24284, 24086]);
+  assert.deepEqual(parseLevels("2, 0, 0.5,,1 1"), [0, 0.5, 1, 2]);
+  assert.equal(parseLevels(""), null);
+  assert.equal(parseLevels("abc"), null);
+  const pts = [{ x: 10, y: 100 }, { x: 50, y: 60 }];        // swing up on screen: levels above y=60
+  assert.equal(hitTest("fibext", pts, 200, 20, 400)?.part, "body");
+  assert.equal(hitTest("fibext", pts, 200, 150, 400), null);
+});
+
+test("fib retracement drawing: default levels 0…4 continue past the start; hit band covers them", async () => {
+  const { fibPrices, hitTest, FIB_EXT_LEVELS } = await import("../js/core.js");
+  const f = fibPrices(100, 200, FIB_EXT_LEVELS);             // drag 100 → 200: 0 at 200, 1 at 100, 2 at 0
+  assert.deepEqual(f.filter((x) => [0, 1, 2].includes(x.level)).map((x) => x.price), [200, 100, 0]);
+  const pts = [{ x: 10, y: 100 }, { x: 50, y: 60 }];        // levels below y=100 down to y=220
+  assert.equal(hitTest("fib", pts, 300, 200, 400)?.part, "body");
+  assert.equal(hitTest("fib", pts, 300, 30, 400), null);
 });

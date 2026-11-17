@@ -123,7 +123,7 @@ export class IndicatorManager {
     const pane = this.paneOf(a);
     const list = [];
     for (const s of out.series) {
-      const opts = { color: s.color, lineWidth: s.lineWidth || 2, priceLineVisible: false, lastValueVisible: s.type !== "histogram",
+      const opts = { color: s.color, lineWidth: s.lineWidth || 2, lineStyle: s.lineStyle || 0, priceLineVisible: false, lastValueVisible: s.type !== "histogram",
                      visible: a.visible, title: "", crosshairMarkerVisible: false };
       const kind = s.type === "histogram" ? LC.HistogramSeries : s.type === "area" ? LC.AreaSeries : LC.LineSeries;
       const api_ = this.view.chart.addSeries(kind, opts, s.pane === 0 ? 0 : pane);

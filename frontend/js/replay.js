@@ -57,15 +57,45 @@ export class ReplayController {
     $(".rp-random").onclick = () => this.startRandom();
     $(".rp-blind").onclick = () => this.startBlind();
     $(".rp-reveal").onclick = () => this.reveal();
+    this.year = store.get("replayYear", "");
+    $(".rp-year").onchange = (e) => { this.year = e.target.value; store.set("replayYear", this.year); this.fillYears(); };
     this.blind = false;
+  }
+
+  /** year picker: the years the active chart has data for; the date box is limited to the chosen year */
+  fillYears() {
+    const sel = this.bar.querySelector(".rp-year"), { first, last } = this.app.active?.state || {};
+    if (!first || !last) return;
+    const y0 = new Date(first * 1000).getUTCFullYear(), y1 = new Date(last * 1000).getUTCFullYear();
+    const want = String(this.year || "");
+    sel.innerHTML = '<option value="">All years</option>' +
+      Array.from({ length: y1 - y0 + 1 }, (_, i) => y1 - i).map((y) => `<option value="${y}">${y}</option>`).join("");
+    sel.value = want && Number(want) >= y0 && Number(want) <= y1 ? want : "";
+    const dt = this.bar.querySelector(".rp-date");
+    dt.min = sel.value ? `${sel.value}-01-01` : ""; dt.max = sel.value ? `${sel.value}-12-31` : "";
+  }
+
+  /** a random weekday (unix seconds) inside the data, limited to the chosen year */
+  randomTime() {
+    this.fillYears();
+    let { first, last } = this.app.active.state;
+    if (!first || !last) return null;
+    last -= 86400 * 5;
+    const y = Number(this.bar.querySelector(".rp-year").value);
+    if (y) {
+      first = Math.max(first, Date.UTC(y, 0, 1) / 1000);
+      last = Math.min(last, Date.UTC(y, 11, 31, 12) / 1000);
+      if (last <= first) { this.app.toast(`No data for ${y} on this chart`, "error"); return null; }
+    }
+    let t = first + Math.random() * (last - first);
+    while ([0, 6].includes(new Date(t * 1000).getUTCDay())) t += 86400;
+    return t;
   }
 
   /** Blind practice: a random day with every date hidden (axis, legend, status, news). Reveal at the end. */
   async startBlind() {
-    const { first, last } = this.app.active.state;
-    if (!first || !last) return;
-    let t = first + Math.random() * (last - first - 86400 * 5);
-    while ([0, 6].includes(new Date(t * 1000).getUTCDay())) t += 86400;
+    const t = this.randomTime();
+    if (t == null) return;
     this.setBlind(true);
     this.blindDate = new Date(t * 1000).toISOString().slice(0, 10);
     this.blindStartTrades = this.app.practice.done.length;
@@ -98,6 +128,7 @@ export class ReplayController {
     this.picking = true;
     document.body.classList.add("picking");
     this.bar.hidden = false;
+    this.fillYears();
     this.status("Click a bar (in any window) to start the replay there — or pick a date / 🎲 random day");
     this.app.toast("Replay: click the bar where you want to start, or choose a date in the replay bar");
   }
@@ -117,9 +148,8 @@ export class ReplayController {
   }
 
   async startRandom() {
-    const { first, last } = this.app.active.state;
-    if (!first || !last) return;
-    const t = first + Math.random() * (last - first - 86400 * 5);
+    const t = this.randomTime();
+    if (t == null) return;
     const d = new Date(t * 1000).toISOString().slice(0, 10);
     this.bar.querySelector(".rp-date").value = d;
     await this.startAtDate(d);
@@ -169,9 +199,11 @@ export class ReplayController {
     }));
     this.active = true;
     this.bar.hidden = false;
+    this.fillYears();
     this.app.enterReplay();
     for (const r of this.rs.values()) this.enterPanel(r);
     this.renderAll(true);
+    if (keepK == null) for (const r of this.rs.values()) { r.panel.view.focusLast(); r.panel.markAuto?.(); }
     this.app.news?.ensureRange(m.bars[0]?.time, m.bars[m.bars.length - 1]?.time, m.current?.time);
     await Promise.all([...this.rs.values()].map((r) => r.panel.indicators.refresh()));
     this.renderAll(true);

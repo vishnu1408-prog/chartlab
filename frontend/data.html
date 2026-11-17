@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChartLab Data</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><ellipse cx='8' cy='4' rx='5' ry='2' fill='none' stroke='%2326a69a' stroke-width='1.5'/><path d='M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4' fill='none' stroke='%2326a69a' stroke-width='1.5'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { display: grid; grid-template-columns: 260px 1fr; gap: 12px; padding: 12px 16px; min-height: 100vh; box-sizing: border-box; }
+    @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; } }
+    .side, .main { min-width: 0; }
+    h1 { font-size: 18px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+    h3 { font-size: 13px; color: var(--dim); margin: 12px 0 4px; font-weight: 600; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+    .tbl { cursor: pointer; padding: 3px 4px; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; }
+    .tbl:hover { background: var(--panel2); }
+    .cols { font-size: 11px; color: var(--dim); padding: 0 4px 4px 14px; display: none; font-family: ui-monospace, monospace; }
+    .ex { display: block; width: 100%; text-align: left; margin: 2px 0; background: var(--panel2); color: var(--text);
+          border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; cursor: pointer; font-size: 12px; }
+    .ex:hover { border-color: var(--accent); }
+    textarea { width: 100%; box-sizing: border-box; min-height: 130px; background: #0e1119; color: var(--text); border: 1px solid var(--border);
+               border-radius: 6px; padding: 8px; font: 13px/1.45 ui-monospace, monospace; resize: vertical; }
+    .bar { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+    button.b { background: var(--accent); color: #fff; border: 0; border-radius: 5px; padding: 6px 14px; cursor: pointer; font-weight: 600; }
+    button.g { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; cursor: pointer; }
+    .res { overflow: auto; max-height: calc(100vh - 290px); border: 1px solid var(--border); border-radius: 6px; }
+    table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; width: max-content; min-width: 100%; }
+    th { position: sticky; top: 0; background: var(--panel2); text-align: left; padding: 4px 8px; color: var(--dim); font-weight: 500; }
+    td { padding: 3px 8px; border-top: 1px solid var(--border); white-space: nowrap; max-width: 520px; overflow: hidden; text-overflow: ellipsis; }
+    td.n { text-align: right; }
+    .err { color: var(--down); white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; }
+    .dim { color: var(--dim); } a { color: #7aa7ff; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="side">
+    <h1>🗄 Data</h1>
+    <div class="dim" style="font-size:12px">Read-only SQL (DuckDB) over ChartLab's price files and records. <a href="/">← Chart</a></div>
+    <h3>Reports</h3>
+    <div id="examples"></div>
+    <h3>Tables <span class="dim">(click a name to insert, ▸ for columns)</span></h3>
+    <div id="tables" class="dim">loading…</div>
+  </div>
+  <div class="main">
+    <div class="card">
+      <textarea id="sql" spellcheck="false" placeholder="SELECT * FROM paper_trades ORDER BY closed DESC"></textarea>
+      <div class="bar">
+        <button class="b" id="run">▶ Run (Ctrl+Enter)</button>
+        <button class="g" id="csv" disabled>⬇ CSV</button>
+        <span class="dim" id="info"></span>
+      </div>
+    </div>
+    <div id="out" style="margin-top:10px"></div>
+  </div>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let last = null;
+  const KEY = "chartlab.data.sql";
+  try { $("sql").value = localStorage.getItem(KEY) || ""; } catch { /* private window */ }
+
+  async function run() {
+    const sql = $("sql").value.trim();
+    if (!sql) return;
+    try { localStorage.setItem(KEY, sql); } catch { /* ignore */ }
+    $("info").textContent = "running…"; $("run").disabled = true;
+    try {
+      const r = await fetch("/api/sql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql }) });
+      const d = await r.json();
+      if (d.error) { $("out").innerHTML = `<div class="err">${esc(d.error)}</div>`; $("info").textContent = ""; last = null; $("csv").disabled = true; return; }
+      last = d;
+      $("csv").disabled = !d.rows.length;
+      $("info").textContent = `${d.rows.length.toLocaleString()} row${d.rows.length === 1 ? "" : "s"}${d.truncated ? " (first 5,000 shown — add a LIMIT or GROUP BY)" : ""} · ${d.ms} ms`;
+      const num = d.rows.length ? d.columns.map((_, i) => d.rows.every((r) => r[i] == null || typeof r[i] === "number")) : [];
+      $("out").innerHTML = `<div class="res"><table><tr>${d.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>` +
+        d.rows.map((r) => `<tr>${r.map((v, i) => `<td class="${num[i] ? "n" : ""}" title="${esc(v)}">${v == null ? '<span class="dim">null</span>' : esc(typeof v === "number" && !Number.isInteger(v) ? +v.toFixed(6) : v)}</td>`).join("")}</tr>`).join("") +
+        `</table></div>`;
+    } catch (e) {
+      $("out").innerHTML = `<div class="err">${esc(e.message)}</div>`;
+    } finally { $("run").disabled = false; }
+  }
+
+  function csv() {
+    if (!last) return;
+    const q = (v) => (v == null ? "" : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    const text = [last.columns.map(q).join(","), ...last.rows.map((r) => r.map(q).join(","))].join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+    a.download = `chartlab-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  async function init() {
+    try {
+      const d = await (await fetch("/api/sql/tables")).json();
+      $("examples").innerHTML = d.examples.map((e, i) => `<button class="ex" data-i="${i}">${esc(e.name)}</button>`).join("");
+      $("examples").onclick = (ev) => { const b = ev.target.closest(".ex"); if (!b) return; $("sql").value = d.examples[b.dataset.i].sql; run(); };
+      $("tables").innerHTML = d.tables.map((t, i) => `<div><span class="tg" data-i="${i}" style="cursor:pointer">▸</span> <span class="tbl" data-n="${esc(t.name)}">${esc(t.name)}</span>
+        <div class="cols" id="c${i}">${t.columns.map((c) => `${esc(c.name)} <span style="opacity:.6">${esc(c.type.toLowerCase())}</span>`).join("<br>")}</div></div>`).join("") +
+        `<div class="dim" style="font-size:11px;margin-top:6px">+ <span class="tbl" data-m="1">index_1m('NIFTY 50')</span> — full Kaggle minute history of an index</div>`;
+      $("tables").onclick = (ev) => {
+        const tg = ev.target.closest(".tg");
+        if (tg) { const c = $("c" + tg.dataset.i); const open = c.style.display === "block"; c.style.display = open ? "none" : "block"; tg.textContent = open ? "▸" : "▾"; return; }
+        const t = ev.target.closest(".tbl");
+        if (t) { $("sql").value = t.dataset.m ? "SELECT * FROM index_1m('NIFTY 50') ORDER BY date DESC LIMIT 100" : `SELECT * FROM ${t.dataset.n} LIMIT 100`; run(); }
+      };
+    } catch (e) { $("tables").textContent = `Could not load tables: ${e.message}`; }
+  }
+
+  $("run").onclick = run;
+  $("csv").onclick = csv;
+  $("sql").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); } });
+  init();
+})();
+</script>
+</body>
+</html>

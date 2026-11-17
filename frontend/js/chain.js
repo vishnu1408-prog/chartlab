@@ -19,6 +19,17 @@ export class ChainPanel {
     this.$(".ch-n").onchange = (e) => { this.n = Number(e.target.value); store.set("chainStrikes", this.n); this.refresh(true); };
     this.$(".ch-exp").onchange = (e) => { this.expiry = e.target.value; this.refresh(true); };
     setInterval(() => { if (this.visible && !app.replay.active && this.live) this.refresh(); }, 5000);
+    this.el.addEventListener("click", (e) => {                 // 📈 → the option's chart; price → paper order ticket
+      const ch = e.target.closest(".och");
+      if (ch && this.expiry) {
+        app.openOption({ symbol: this.symbol, expiry: this.expiry, strike: Number(ch.dataset.k), type: ch.dataset.t });
+        return;
+      }
+      const td = e.target.closest("td.ltp.pick");
+      if (!td || !this.expiry) return;
+      app.paper.prefill({ symbol: this.symbol, expiry: this.expiry, strike: Number(td.dataset.k), type: td.dataset.t });
+      app.showTab("paper");
+    });
     setInterval(() => { if (this.visible && !app.replay.active && !this.live) this.refresh(); }, 60000);
   }
 
@@ -56,6 +67,7 @@ export class ChainPanel {
     this.$(".ch-head").innerHTML = `<b>${esc(u.label)}</b> ${fmtPrice(u.price)} <span class="${(u.chg ?? 0) >= 0 ? "up" : "down"}">${u.chg == null ? "" : signed(Math.round(u.chg * 100) / 100)}</span>
       · ATM straddle <b>${r.straddle == null ? "—" : fmtPrice(r.straddle)}</b> · PCR <b>${r.pcr ?? "—"}</b>
       <span class="dim">· ${r.days_left} d left · lot ${r.lot} · ${r.at}</span>`;
+    const paperOk = ["NIFTY 50", "SENSEX", "MCX CRUDEOIL", "MCX NATURALGAS"].includes(r.symbol);
     const maxOI = Math.max(1, ...r.rows.flatMap((x) => [x.ce?.oi || 0, x.pe?.oi || 0]));
     const spot = u.price;
     const bar = (oi, side) => `<i class="ch-bar ${side}" style="width:${Math.round((oi || 0) / maxOI * 100)}%"></i>`;
@@ -69,9 +81,9 @@ export class ChainPanel {
         <td class="ce ${ceItm ? "itm" : ""} oi" title="CE OI ${num(cell(c, "oi"))} lots · volume ${num(cell(c, "vol"))} lots">${bar(cell(c, "oi"), "ce")}<span>${num(cell(c, "oi"))}</span></td>
         <td class="ce ${ceItm ? "itm" : ""} ${(cell(c, "doi") ?? 0) >= 0 ? "up" : "down"}">${signed(cell(c, "doi"))}</td>
         <td class="ce ${ceItm ? "itm" : ""} dim">${cell(c, "iv") ?? "—"}</td>
-        <td class="ce ${ceItm ? "itm" : ""} ltp" title="${esc(x.ce_symbol || "")} · bid / ask ${ba(c)}">${ltp(c)}</td>
+        <td class="ce ${ceItm ? "itm" : ""} ltp${paperOk ? " pick" : ""}" data-k="${x.strike}" data-t="CE" title="${esc(x.ce_symbol || "")} · bid / ask ${ba(c)}${paperOk ? " · click: paper-trade it · 📈: its chart" : ""}"><span class="och" data-k="${x.strike}" data-t="CE" title="Open this option's chart">📈</span>${ltp(c)}</td>
         <td class="k">${num(x.strike, x.strike % 1 ? 1 : 0)}</td>
-        <td class="pe ${peItm ? "itm" : ""} ltp" title="${esc(x.pe_symbol || "")} · bid / ask ${ba(p)}">${ltp(p)}</td>
+        <td class="pe ${peItm ? "itm" : ""} ltp${paperOk ? " pick" : ""}" data-k="${x.strike}" data-t="PE" title="${esc(x.pe_symbol || "")} · bid / ask ${ba(p)}${paperOk ? " · click: paper-trade it · 📈: its chart" : ""}"><span class="och" data-k="${x.strike}" data-t="PE" title="Open this option's chart">📈</span>${ltp(p)}</td>
         <td class="pe ${peItm ? "itm" : ""} dim">${cell(p, "iv") ?? "—"}</td>
         <td class="pe ${peItm ? "itm" : ""} ${(cell(p, "doi") ?? 0) >= 0 ? "up" : "down"}">${signed(cell(p, "doi"))}</td>
         <td class="pe ${peItm ? "itm" : ""} oi" title="PE OI ${num(cell(p, "oi"))} lots · volume ${num(cell(p, "vol"))} lots">${bar(cell(p, "oi"), "pe")}<span>${num(cell(p, "oi"))}</span></td></tr>`;

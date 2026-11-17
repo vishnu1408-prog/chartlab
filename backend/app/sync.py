@@ -18,6 +18,62 @@ def now_ist() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) + dt.timedelta(hours=5, minutes=30)
 
 
+def quote_time(q: dict | None) -> dt.datetime | None:
+    """When the exchange last updated this quote (last trade, else last feed). Angel sends '19-Oct-2026 23:29:59';
+    indices have no trades (trade time 01-Jan-1970) → their feed time."""
+    if not q:
+        return None
+    for k in ("exchTradeTime", "exchFeedTime"):
+        try:
+            x = dt.datetime.strptime(str(q.get(k)), "%d-%b-%Y %H:%M:%S")
+        except (TypeError, ValueError):
+            continue
+        if x.year > 2000:
+            return x
+    return None
+
+
+_holiday: dict = {}          # (exchange, date) → (checked at, closed?)
+HOLIDAY_PROBE = {"NSE": "NIFTY 50", "BSE": "SENSEX", "MCX": "MCX CRUDEOIL"}
+OPEN_MIN = {"NSE": 555, "BSE": 555, "MCX": 540}
+
+
+def is_holiday(exchange: str, t: dt.datetime | None = None) -> bool:
+    """A weekday the exchange did not open (e.g. Diwali): 10 minutes after the scheduled open its price feed has not
+    updated today. Before that we don't know yet → False. Checked at most every 10 minutes; no Angel → False."""
+    t = t or now_ist()
+    if config.OFFLINE or t.weekday() >= 5 or exchange not in HOLIDAY_PROBE:
+        return False
+    if t.hour * 60 + t.minute < OPEN_MIN[exchange] + 10:
+        return False
+    key = (exchange, t.date())
+    hit = _holiday.get(key)
+    if hit and time.time() - hit[0] < 600:               # re-check every 10 min (special sessions, e.g. Muhurat)
+        return hit[1]
+    try:
+        if not sources.Angel.available():
+            return False
+        sym = HOLIDAY_PROBE[exchange]
+        if exchange == "MCX":
+            from . import chain
+            seg, name, rows = chain.contracts(sym)
+            ex, tok, _ = chain.underlying(sym, seg, name, sorted({r[0] for r in rows})[0])
+        else:
+            ex, tok = exchange, sources.Angel.token(sym)
+        q = sources.Angel.quotes({ex: [tok]}, "FULL").get(str(tok)) if tok else None
+        qt = quote_time(q)
+        if qt is None:
+            return False
+        closed = qt.date() < t.date()
+        _holiday[key] = (time.time(), closed)
+        if closed:
+            log.info("%s holiday detected: last exchange update %s", exchange, qt)
+        return closed
+    except Exception as e:
+        log.warning("holiday check %s: %s", exchange, e)
+        return False
+
+
 def market_open(t: dt.datetime | None = None, sym: str | None = None) -> bool:
     t = t or now_ist()
     m = t.hour * 60 + t.minute
@@ -25,11 +81,12 @@ def market_open(t: dt.datetime | None = None, sym: str | None = None) -> bool:
     if s is not None and s.kind == "crypto":
         return True                                            # trades 24/7
     if s is not None and s.exchange == "MCX":                  # Mon–Fri 09:00 → 23:30 (23:55 in the northern winter)
-        return t.weekday() < 5 and 540 - 1 <= m <= 23 * 60 + 55
+        return t.weekday() < 5 and 540 - 1 <= m <= 23 * 60 + 55 and not is_holiday("MCX", t)
     if s is not None and not s.nse_hours:                     # gold futures: Sun 18:00 → Fri 17:00 New York
         u = t - dt.timedelta(hours=5, minutes=30)              # UTC; closed Sat all day, Fri ≥ ~21:00, Sun < ~22:00 UTC
         return not (u.weekday() == 5 or (u.weekday() == 4 and u.hour >= 21) or (u.weekday() == 6 and u.hour < 22))
-    return t.weekday() < 5 and config.SESSION_START - 1 <= m <= config.SESSION_END
+    return (t.weekday() < 5 and config.SESSION_START - 1 <= m <= config.SESSION_END
+            and not is_holiday(s.exchange if s is not None and s.exchange in ("NSE", "BSE") else "NSE", t))
 
 
 def nse_busy(t: dt.datetime | None = None) -> bool:
@@ -61,6 +118,9 @@ def sync_symbol(sym: str, force: bool = False) -> dict:
             added["binance_1m"] = store.save_ext(sym, sources.binance_klines(s.binance, start.to_pydatetime()), "1")
             if not store.ext_path(sym, "D").exists() or force:
                 added["yahoo_1d"] = store.save_ext(sym, sources.yahoo(sym, "1d", "max"), "D")   # daily before 2021
+        elif sources.Angel.available() and s.kind == "option":     # option contract: ≤ 60 days of Angel candles
+            start = max(last + pd.Timedelta(minutes=1), pd.Timestamp(now_ist()) - pd.Timedelta(days=60))
+            added["angel_1m"] = store.save_ext(sym, sources.Angel.candles(sym, start.to_pydatetime(), now_ist()), "1")
         elif sources.Angel.available() and s.exchange == "MCX":
             backfill_async(sym)                                  # years of history: own thread, resumable
             start = max(last + pd.Timedelta(minutes=1), pd.Timestamp(now_ist()) - pd.Timedelta(days=20))
@@ -129,6 +189,9 @@ def _angel_live(sym: str, t: dt.datetime, day_start: dt.datetime) -> pd.DataFram
     s = symbols.get(sym)
     tok = sources.Angel.token(sym)
     q = sources.Angel.quotes({s.exchange: [tok]}, "FULL").get(str(tok)) if tok else None
+    qt = quote_time(q)
+    if q and qt is not None and qt.date() < t.date():
+        q = None                                                 # stale (holiday / before the open): no fake bars
     if q and q.get("ltp"):
         cum = q.get("tradeVolume") or 0
         dv = max(cum - st["vol"], 0) if st["vol"] is not None else 0

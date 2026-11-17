@@ -141,3 +141,15 @@ def test_market_hours_per_symbol():
     assert sync.market_open(dt.datetime(2026, 10, 10, 10, 0), sym="BTCUSD")         # crypto: Saturday too
     assert sync.market_open(dt.datetime(2026, 10, 7, 23, 0), sym="XAUUSD")          # gold trades at night IST
     assert not sync.market_open(dt.datetime(2026, 10, 10, 20, 0), sym="XAUUSD")     # Saturday
+
+
+def test_stale_gold_chart_is_synced_before_drawing(client, monkeypatch):
+    from app import main
+    calls = []
+    monkeypatch.setattr(sync, "market_open", lambda t=None, sym=None: True)
+    monkeypatch.setattr(sync, "sync_symbol", lambda s, force=False: calls.append(("now", s)))
+    monkeypatch.setattr(sync, "sync_async", lambda s, force=False: calls.append(("bg", s)))
+    monkeypatch.setattr(main, "_stale", lambda s, hours=2: True)
+    client.get("/api/candles", params={"symbol": "XAUUSD", "tf": "5"})
+    client.get("/api/candles", params={"symbol": "NIFTY 50", "tf": "5"})
+    assert calls == [("now", "XAUUSD"), ("bg", "NIFTY 50")]          # NSE stays in the background (Angel rate limits)

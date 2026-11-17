@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FII / DII</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><rect x='3' y='4' width='3' height='9' fill='%2326a69a'/><rect x='10' y='7' width='3' height='6' fill='%23ef5350'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 12px 16px 40px; }
+    .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+    h1 { font-size: 20px; margin: 0 8px 0 0; } .grow { flex: 1; } a { color: #7aa7ff; }
+    select, button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 5px 9px; cursor: pointer; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .cards div { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    .cards b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; } .cards small { color: var(--dim); }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+    .card h2 { font-size: 14px; margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .card h2 .dim { font-weight: 400; font-size: 12px; }
+    .fchart { position: relative; width: 100%; height: 260px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 3px 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    th { color: var(--dim); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+    td:first-child, th:first-child { text-align: left; }
+    .tbl { max-height: 420px; overflow: auto; }
+    .lgd { font-size: 12px; color: var(--dim); } .lgd i { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 10px; vertical-align: -1px; }
+    .note { font-size: 12px; color: var(--dim); margin-top: 4px; }
+    @media (max-width: 640px) { .wrap { padding: 10px 12px 30px; } .fchart { height: 220px; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>🏦 FII / DII</h1>
+    <select id="days" title="how far back">
+      <option value="20">1 month</option><option value="60" selected>3 months</option><option value="125">6 months</option><option value="250">1 year</option>
+    </select>
+    <button id="upd" title="fetch today's NSE cash figures and NSDL FPI now">⟳ Update</button>
+    <span class="dim" id="at"></span>
+    <span class="grow"></span>
+    <a href="oi.html">📊 OI</a> <a href="/">← Chart</a>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="card">
+    <h2>Cash market — net buy / sell <span class="dim">₹ crore per day · NSE provisional (FII & DII); where NSE is missing, FII = NSDL FPI (equity, exchange route)</span></h2>
+    <div class="fchart" id="c_cash"></div>
+    <div class="lgd"><i style="background:#2962ff"></i>FII / FPI net <i style="background:#ffb74d"></i>DII net <i style="background:#7e57c2"></i>FII from NSDL (no NSE figure)</div>
+  </div>
+
+  <div class="card">
+    <h2>Index futures — % of positions that are LONG <span class="dim">participant-wise open interest (NSE) · 50 % = balanced; FII below ~30 % = heavily short</span></h2>
+    <div class="fchart" id="c_pos"></div>
+    <div class="lgd"><i style="background:#2962ff"></i>FII <i style="background:#ffb74d"></i>DII <i style="background:#26a69a"></i>Pro <i style="background:#ef5350"></i>Client (retail)</div>
+  </div>
+
+  <div class="card">
+    <h2>F&amp;O positions — latest day <span class="dim" id="pos_day"></span></h2>
+    <div class="tbl"><table id="t_pos"></table></div>
+    <div class="note">Contracts. Net = long − short; "chg" = change from the previous trading day. Calls/puts: net long (+) means they BOUGHT more than they sold.</div>
+  </div>
+
+  <div class="card">
+    <h2>Cash market — daily <span class="dim">₹ crore</span></h2>
+    <div class="tbl"><table id="t_cash"></table></div>
+    <div class="note" id="cash_note"></div>
+  </div>
+
+  <div class="card">
+    <h2>FII F&amp;O positions — day by day</h2>
+    <div class="tbl"><table id="t_fii"></table></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const COLORS = { FII: "#2962ff", DII: "#ffb74d", Pro: "#26a69a", Client: "#ef5350" };
+const n0 = (v) => v == null ? "—" : Math.round(v).toLocaleString("en-IN");
+const cr = (v) => v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+const sg = (v) => v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v)).toLocaleString("en-IN");
+const cls = (v) => v == null ? "" : v > 0 ? "up" : v < 0 ? "down" : "";
+const pct = (v) => v == null ? "—" : v.toFixed(1) + "%";
+let charts = {};
+
+function chart(id) {
+  if (charts[id]) { charts[id].remove(); }
+  const c = LightweightCharts.createChart($(id), { autoSize: true, layout: { background: { color: "transparent" }, textColor: "#787b86" },
+    grid: { vertLines: { color: "#2a2e3944" }, horzLines: { color: "#2a2e3944" } }, rightPriceScale: { borderColor: "#2a2e39" },
+    timeScale: { borderColor: "#2a2e39" } });
+  charts[id] = c;
+  return c;
+}
+const ts = (d) => d;                                                  // "YYYY-MM-DD" is a valid business-day time
+
+function render(d) {
+  const days = +$("days").value;
+  const cash = d.cash.slice(-days), fpi = d.fpi, pos = d.positions;
+  const fpiBy = Object.fromEntries(fpi.map((r) => [r.date, r]));
+  const cashBy = Object.fromEntries(cash.map((r) => [r.date, r]));
+  // dates on the chart: every cash or NSDL day in range
+  const allDates = [...new Set([...cash.map((r) => r.date), ...fpi.map((r) => r.date)])].sort().slice(-days);
+
+  // cards
+  const last = cash[cash.length - 1], fl = fpi[fpi.length - 1];
+  const sum = (rows, k, n) => rows.slice(-n).reduce((a, r) => a + (r[k] ?? 0), 0);
+  const posLast = pos.filter((r) => r.date === d.pos_last), P = Object.fromEntries(posLast.map((r) => [r.type, r]));
+  const card = (lab, v, sub, c = cls(v)) => `<div><small>${lab}</small><b class="${c}">${v}</b><small>${sub}</small></div>`;
+  $("cards").innerHTML = [
+    last ? card(`FII cash · ${last.date}`, cr(last.fii_net), "₹ cr (NSE)", cls(last.fii_net)) : "",
+    last ? card(`DII cash · ${last.date}`, cr(last.dii_net), "₹ cr (NSE)", cls(last.dii_net)) : "",
+    cash.length >= 5 ? card("FII · last 5 NSE days", cr(sum(cash, "fii_net", 5)), "₹ cr", cls(sum(cash, "fii_net", 5))) : "",
+    cash.length >= 5 ? card("DII · last 5 NSE days", cr(sum(cash, "dii_net", 5)), "₹ cr", cls(sum(cash, "dii_net", 5))) : "",
+    fl ? card(`NSDL FPI · ${fl.date}`, cr(fl.eq_net), `month so far ${cr(d.fpi_mtd)} cr`, cls(fl.eq_net)) : "",
+    P.FII ? card("FII index futures long", pct(P.FII.idx_fut_long_pct), `chg ${sg(P.FII.idx_fut_long_pct_chg ?? 0)} pts · net ${sg(P.FII.idx_fut_net_chg)} contracts`,
+      P.FII.idx_fut_long_pct < 30 ? "down" : P.FII.idx_fut_long_pct > 60 ? "up" : "") : "",
+    P.Client ? card("Client (retail) index futures long", pct(P.Client.idx_fut_long_pct), `chg ${sg(P.Client.idx_fut_long_pct_chg ?? 0)} pts`, "") : "",
+  ].join("");
+  $("at").textContent = `cash to ${d.cash_last ?? "—"} · NSDL to ${d.fpi_last ?? "—"} · F&O to ${d.pos_last ?? "—"}` +
+    (d.status?.error ? ` · ⚠ ${d.status.error}` : "");
+
+  // cash chart
+  const c1 = chart("c_cash");
+  const fii = c1.addSeries(LightweightCharts.HistogramSeries, { priceLineVisible: false });
+  const dii = c1.addSeries(LightweightCharts.LineSeries, { color: "#ffb74d", lineWidth: 2, priceLineVisible: false });
+  fii.setData(allDates.map((t) => {
+    const c = cashBy[t];
+    if (c && c.fii_net != null) return { time: ts(t), value: c.fii_net, color: "#2962ff" };
+    const f = fpiBy[t];
+    return f ? { time: ts(t), value: f.eq_net, color: "#7e57c2" } : { time: ts(t) };
+  }));
+  dii.setData(cash.filter((r) => allDates.includes(r.date) && r.dii_net != null).map((r) => ({ time: ts(r.date), value: r.dii_net })));
+  c1.timeScale().fitContent();
+
+  // positions chart
+  const c2 = chart("c_pos");
+  const pdays = [...new Set(pos.map((r) => r.date))].sort().slice(-days);
+  for (const t of ["FII", "DII", "Pro", "Client"]) {
+    const s = c2.addSeries(LightweightCharts.LineSeries, { color: COLORS[t], lineWidth: t === "FII" ? 3 : 2, priceLineVisible: false });
+    s.setData(pos.filter((r) => r.type === t && pdays.includes(r.date) && r.idx_fut_long_pct != null).map((r) => ({ time: ts(r.date), value: r.idx_fut_long_pct })));
+  }
+  c2.timeScale().fitContent();
+
+  // latest positions table
+  $("pos_day").textContent = d.pos_last ? `· ${d.pos_last}` : "";
+  $("t_pos").innerHTML = `<tr><th>Who</th><th>Idx fut long</th><th>Idx fut short</th><th>Net</th><th>chg</th><th>Long %</th><th>chg</th>
+    <th>Idx calls net</th><th>chg</th><th>Idx puts net</th><th>chg</th><th>Stock fut net</th><th>chg</th></tr>` +
+    ["FII", "DII", "Pro", "Client"].filter((t) => P[t]).map((t) => { const r = P[t]; return `<tr><td><b style="color:${COLORS[t]}">${t === "Client" ? "Client (retail)" : t}</b></td>
+      <td>${n0(r.idx_fut_long)}</td><td>${n0(r.idx_fut_short)}</td><td class="${cls(r.idx_fut_net)}">${sg(r.idx_fut_net)}</td><td class="${cls(r.idx_fut_net_chg)}">${sg(r.idx_fut_net_chg)}</td>
+      <td>${pct(r.idx_fut_long_pct)}</td><td class="${cls(r.idx_fut_long_pct_chg)}">${r.idx_fut_long_pct_chg == null ? "—" : (r.idx_fut_long_pct_chg >= 0 ? "+" : "−") + Math.abs(r.idx_fut_long_pct_chg).toFixed(1)}</td>
+      <td class="${cls(r.idx_call_net)}">${sg(r.idx_call_net)}</td><td class="${cls(r.idx_call_net_chg)}">${sg(r.idx_call_net_chg)}</td>
+      <td class="${cls(r.idx_put_net)}">${sg(r.idx_put_net)}</td><td class="${cls(r.idx_put_net_chg)}">${sg(r.idx_put_net_chg)}</td>
+      <td class="${cls(r.stk_fut_net)}">${sg(r.stk_fut_net)}</td><td class="${cls(r.stk_fut_net_chg)}">${sg(r.stk_fut_net_chg)}</td></tr>`; }).join("");
+
+  // cash table (newest first)
+  $("t_cash").innerHTML = `<tr><th>Date</th><th>FII buy</th><th>FII sell</th><th>FII net</th><th>DII buy</th><th>DII sell</th><th>DII net</th><th>NSDL FPI net</th></tr>` +
+    allDates.slice().reverse().map((t) => { const c = cashBy[t] || {}, f = fpiBy[t] || {}; return `<tr><td>${t}</td>
+      <td>${n0(c.fii_buy)}</td><td>${n0(c.fii_sell)}</td><td class="${cls(c.fii_net)}">${cr(c.fii_net)}</td>
+      <td>${n0(c.dii_buy)}</td><td>${n0(c.dii_sell)}</td><td class="${cls(c.dii_net)}">${cr(c.dii_net)}</td>
+      <td class="${cls(f.eq_net)}">${cr(f.eq_net)}</td></tr>`; }).join("");
+  $("cash_note").textContent = "NSE publishes FII/DII cash figures only for the latest day (around 6–8 pm); ChartLab records them every evening. " +
+    "History 2018–2024 is from an older download; Jan 2025 → mid-Oct 2026 has no NSE figures (FII from NSDL instead, which is reported a day later and counts trades by settlement).";
+
+  // FII day-by-day
+  const fr = pos.filter((r) => r.type === "FII" && pdays.includes(r.date)).reverse();
+  $("t_fii").innerHTML = `<tr><th>Date</th><th>Idx fut net</th><th>chg</th><th>Long %</th><th>Idx calls net</th><th>Idx puts net</th><th>Stock fut net</th><th>Cash net (₹ cr)</th></tr>` +
+    fr.map((r) => { const c = cashBy[r.date], f = fpiBy[r.date], cv = c?.fii_net ?? f?.eq_net; return `<tr><td>${r.date}</td>
+      <td class="${cls(r.idx_fut_net)}">${sg(r.idx_fut_net)}</td><td class="${cls(r.idx_fut_net_chg)}">${sg(r.idx_fut_net_chg)}</td><td>${pct(r.idx_fut_long_pct)}</td>
+      <td class="${cls(r.idx_call_net)}">${sg(r.idx_call_net)}</td><td class="${cls(r.idx_put_net)}">${sg(r.idx_put_net)}</td>
+      <td class="${cls(r.stk_fut_net)}">${sg(r.stk_fut_net)}</td><td class="${cls(cv)}">${cr(cv)}${c ? "" : f ? " ᴺ" : ""}</td></tr>`; }).join("");
+}
+
+let data = null;
+async function load() {
+  const r = await fetch(`/api/flows?days=${Math.max(+$("days").value, 60)}`);
+  data = await r.json();
+  render(data);
+}
+$("days").onchange = load;
+$("upd").onclick = async () => {
+  $("upd").disabled = true; $("upd").textContent = "⟳ Updating…";
+  try { await fetch("/api/flows/update", { method: "POST" }); await load(); } finally { $("upd").disabled = false; $("upd").textContent = "⟳ Update"; }
+};
+load().catch((e) => { $("at").textContent = "failed to load: " + e.message; });
+</script>
+</body>
+</html>

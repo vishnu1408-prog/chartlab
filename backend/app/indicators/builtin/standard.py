@@ -1,4 +1,4 @@
-"""Standard indicators: moving averages, Bollinger, RSI, MACD, Supertrend, VWAP, EMA crossover."""
+"""Standard indicators: moving averages (incl. EMA 21/50/200 ribbon), Bollinger, RSI, MACD, Supertrend, VWAP, EMA crossover."""
 import numpy as np
 import pandas as pd
 
@@ -32,17 +32,97 @@ class EMA(Indicator):
         return Output(series=[line("ema", f"EMA {length}", df, ema(globals()["source"](df, source), length), color)])
 
 
-class Bollinger(Indicator):
-    id, name, description = "bb", "Bollinger Bands", "SMA ± k standard deviations."
-    params = [Param("length", "int", 20, "Length", 2, 500), Param("mult", "float", 2.0, "StdDev", 0.1, 10, 0.1),
-              Param("color", "color", "#26a69a", "Color")]
+class EMARibbon(Indicator):
+    id, name = "ema_ribbon", "EMA 21 / 50 / 200"
+    description = "Three EMAs in one (default 21, 50, 200) with the trend stack in the legend."
+    warmup = 1200                                          # the 200 EMA needs a long run-in to settle
+    params = [Param("show_fast", "bool", True, "Show fast EMA"), Param("fast", "int", 21, "Fast", 1, 500),
+              Param("show_mid", "bool", True, "Show middle EMA"), Param("mid", "int", 50, "Middle", 1, 500),
+              Param("show_slow", "bool", True, "Show slow EMA"), Param("slow", "int", 200, "Slow", 1, 1000), SRC,
+              Param("c_fast", "color", "#2962ff", "Fast colour"), Param("c_mid", "color", "#f5a623", "Middle colour"),
+              Param("c_slow", "color", "#e040fb", "Slow colour")]
 
-    def compute(self, df, length, mult, color):
-        m = df.close.rolling(length).mean()
-        s = df.close.rolling(length).std(ddof=0)
-        return Output(series=[line("basis", "Basis", df, m, "#ff9800", width=1),
-                              line("upper", "Upper", df, m + mult * s, color, width=1),
-                              line("lower", "Lower", df, m - mult * s, color, width=1)])
+    def compute(self, df, fast, mid, slow, source, c_fast, c_mid, c_slow, show_fast=True, show_mid=True, show_slow=True):
+        src = globals()["source"](df, source)
+        e = {n: ema(src, n) for n in (fast, mid, slow)}
+        series = [line(f"ema{n}", f"EMA {n}", df, e[n], c, width=w)
+                  for n, c, w, on in ((fast, c_fast, 1, show_fast), (mid, c_mid, 2, show_mid), (slow, c_slow, 2, show_slow))
+                  if on]
+        info = {}
+        if len(df) > slow:
+            p, f, m, s_ = (float(x.iloc[-1]) for x in (df.close, e[fast], e[mid], e[slow]))
+            stack = ("bullish stack (fast > middle > slow)" if f > m > s_ else
+                     "bearish stack (fast < middle < slow)" if f < m < s_ else "mixed — no clean trend")
+            shown = [(n, v) for n, v, on in ((fast, f, show_fast), (mid, m, show_mid), (slow, s_, show_slow)) if on]
+            above = sum(p > v for _, v in shown)
+            info = {"trend": stack,
+                    "price": (f"above {above} of {len(shown)} shown EMAs" if shown else "no EMA shown"),
+                    "values": " · ".join(f"EMA {n} {v:,.2f}" for n, v in shown)}
+        return Output(series=series, info=info)
+
+
+class Bollinger(Indicator):
+    id, name = "bb", "Bollinger Bands"
+    description = ("Basis (SMA/EMA) ± k standard deviations, optional 1σ/3σ bands, squeeze dots (narrowest bands in "
+                   "N bars), close-outside markers; legend shows %B and band width. Same maths as TradingView (σ ddof=0).")
+    params = [Param("length", "int", 20, "Length", 2, 500, group="Bands"),
+              Param("mult", "float", 2.0, "StdDev", 0.1, 10, 0.1, group="Bands"),
+              Param("source", "choice", "close", "Source", options=["close", "hlc3", "hl2", "ohlc4"], group="Bands"),
+              Param("ma_type", "choice", "SMA", "Basis type", options=["SMA", "EMA"], group="Bands"),
+              Param("extra", "choice", "None", "Extra bands", options=["None", "1σ", "3σ", "1σ + 3σ"], group="Bands"),
+              Param("squeeze", "bool", True, "Squeeze dots", group="Signals"),
+              Param("sq_len", "int", 120, "Squeeze = narrowest width in N bars", 20, 1000, group="Signals"),
+              Param("outside", "bool", False, "Mark closes outside the bands", group="Signals"),
+              Param("color", "color", "#26a69a", "Band colour", group="Display"),
+              Param("basis_color", "color", "#ff9800", "Basis colour", group="Display"),
+              Param("show_basis", "bool", True, "Show basis", group="Display")]
+
+    def compute(self, df, length, mult, source, ma_type, extra, squeeze, sq_len, outside, color, basis_color,
+                show_basis):
+        src = {"close": df.close, "hlc3": (df.high + df.low + df.close) / 3, "hl2": (df.high + df.low) / 2,
+               "ohlc4": (df.open + df.high + df.low + df.close) / 4}[source]
+        m = src.rolling(length).mean() if ma_type == "SMA" else ema(src, length)
+        sd = src.rolling(length).std(ddof=0)
+        up, lo = m + mult * sd, m - mult * sd
+        series = []
+        if show_basis:
+            series.append(line("basis", "Basis", df, m, basis_color, width=1))
+        series += [line("upper", f"Upper {mult:g}σ", df, up, color, width=1),
+                   line("lower", f"Lower {mult:g}σ", df, lo, color, width=1)]
+        for k in ({"1σ": [1.0], "3σ": [3.0], "1σ + 3σ": [1.0, 3.0]}.get(extra, [])):
+            for sgn, nm in ((1, "up"), (-1, "dn")):
+                s_ = line(f"{nm}{k:g}", f"{'+' if sgn > 0 else '−'}{k:g}σ", df, m + sgn * k * sd, color, width=1)
+                s_["lineStyle"] = 2
+                series.append(s_)
+        t = times(df)
+        c = df.close.to_numpy(float)
+        width = ((up - lo) / m * 100).to_numpy(float)                  # band width, % of price
+        with np.errstate(invalid="ignore", divide="ignore"):
+            pb = ((df.close - lo) / (up - lo)).to_numpy(float)        # %B: 0 = lower band, 1 = upper band
+        is_sq = width <= pd.Series(width).rolling(sq_len, min_periods=sq_len).min().to_numpy() + 1e-12
+        mk = []
+        if squeeze:
+            for i in np.where(is_sq & np.isfinite(width))[0]:
+                mk.append({"time": int(t[i]), "position": "belowBar", "shape": "circle", "color": "#ffca28",
+                           "text": "SQZ" if i == 0 or not is_sq[i - 1] else "", "visible_from": int(t[i])})
+        if outside:
+            u, l_ = up.to_numpy(float), lo.to_numpy(float)
+            for i in range(1, len(c)):
+                if c[i] > u[i] and not c[i - 1] > u[i - 1]:
+                    mk.append({"time": int(t[i]), "position": "aboveBar", "shape": "circle", "color": "#ef5350",
+                               "text": "↑BB", "visible_from": int(t[i])})
+                elif c[i] < l_[i] and not c[i - 1] < l_[i - 1]:
+                    mk.append({"time": int(t[i]), "position": "belowBar", "shape": "circle", "color": "#26a69a",
+                               "text": "↓BB", "visible_from": int(t[i])})
+        info = {}
+        if len(c) and np.isfinite(up.iloc[-1]):
+            info["Now"] = (f"U {up.iloc[-1]:,.1f} · B {m.iloc[-1]:,.1f} · L {lo.iloc[-1]:,.1f} · "
+                           f"width {up.iloc[-1] - lo.iloc[-1]:.0f} pts ({width[-1]:.2f} %) · %B {pb[-1]:.2f}"
+                           + (" · SQUEEZE" if is_sq[-1] else ""))
+        info["How to read"] = ("%B > 1 = closed above upper band, < 0 = below lower. Squeeze = narrowest bands in "
+                               f"{sq_len} bars → a big move often follows, direction unknown. Riding a band = trend; "
+                               "tags inside a range = stretched.")
+        return Output(series=series, markers=mk, info=info)
 
 
 class RSI(Indicator):
@@ -143,4 +223,4 @@ class EMACross(Indicator):
                               line("slow", f"EMA {slow}", df, s, "#ff6d00", width=1)], markers=mk)
 
 
-INDICATORS = [SMA(), EMA(), Bollinger(), RSI(), MACD(), Supertrend(), VWAP(), EMACross()]
+INDICATORS = [SMA(), EMA(), EMARibbon(), Bollinger(), RSI(), MACD(), Supertrend(), VWAP(), EMACross()]

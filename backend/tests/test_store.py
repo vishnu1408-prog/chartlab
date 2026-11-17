@@ -91,3 +91,14 @@ def test_24h_market_bars_follow_utc_days():
     n = pd.DatetimeIndex(["2026-01-06 09:15", "2026-01-06 15:29"])
     assert [str(x) for x in store.bucket_key(n, "60")] == ["2026-01-06 09:15:00", "2026-01-06 15:15:00"]
     assert store._session(pd.DataFrame({"close": [1.0]}, index=pd.DatetimeIndex(["2026-01-06 02:00"])), (330, 1770)).shape[0] == 1
+
+
+def test_quote_time_uses_trade_time_else_feed_time():
+    import datetime as dt
+    from app import sync
+    assert sync.quote_time({"exchTradeTime": "19-Oct-2026 23:29:59", "exchFeedTime": "20-Oct-2026 06:57:05"}) == \
+        dt.datetime(2026, 10, 19, 23, 29, 59)
+    assert sync.quote_time({"exchTradeTime": "01-Jan-1970 05:30:00", "exchFeedTime": "19-Oct-2026 16:08:11"}) == \
+        dt.datetime(2026, 10, 19, 16, 8, 11)                       # indices: no trades → feed time
+    assert sync.quote_time({}) is None and sync.quote_time(None) is None
+    assert sync.is_holiday("NSE", dt.datetime(2026, 10, 20, 15, 0)) is False   # offline tests: never guesses

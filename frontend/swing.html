@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Swing Picks</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23131722'/><path d='M3 11l3-4 3 2 4-6' stroke='%23f5a623' stroke-width='2' fill='none'/></svg>">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    body { overflow: auto; height: auto; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, sans-serif; margin: 0; }
+    .wrap { max-width: 1280px; margin: 0 auto; padding: 14px 16px 40px; }
+    .top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .top h1 { font-size: 20px; margin: 0; } .top .grow { flex: 1; }
+    .pill { padding: 2px 8px; border-radius: 10px; font-size: 12px; background: var(--panel2); color: var(--dim); }
+    .paper { background: #f5a62333; color: var(--warn); font-weight: 600; }
+    button.b { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    button.b:hover { border-color: var(--accent); }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+    .card h2 { font-size: 15px; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+    .card h2 .note { font-weight: 400; color: var(--dim); font-size: 12px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--dim); font-weight: 500; white-space: nowrap; }
+    td.n, th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .up { color: var(--up); } .down { color: var(--down); } .dim { color: var(--dim); } .warn { color: var(--warn); }
+    .sym { font-weight: 600; }
+    .why { min-width: 300px; }
+    .why span { display: block; width: fit-content; max-width: 100%; margin: 2px 0; padding: 1px 6px; border-radius: 4px; font-size: 12px; white-space: normal; }
+    .why .f { background: #26a69a22; color: #7fd1c8; } .why .a { background: #ef535022; color: #f19a98; }
+    .ev { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .ev .k { min-width: 64px; font-weight: 700; font-size: 12px; padding-top: 1px; }
+    .k.BUY, .k.BOUGHT { color: var(--up); } .k.SELL, .k.SOLD { color: var(--down); } .k.TARGET, .k.WATCH { color: var(--warn); }
+    .k.INFO, .k.SKIP { color: var(--dim); }
+    .action { border-left: 4px solid var(--warn); }
+    .action .ev { font-size: 14px; }
+    .tbl-scroll { overflow-x: auto; }
+    #eq { height: 220px; }
+    .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+    .kv div { background: var(--panel2); border-radius: 6px; padding: 8px; } .kv b { display: block; font-size: 18px; }
+    details summary { cursor: pointer; color: var(--dim); }
+    a { color: #7aa7ff; }
+    .sym.click { cursor: pointer; color: #7aa7ff; text-decoration: underline dotted; }
+    #modal { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; z-index: 50; }
+    #modal.on { display: flex; }
+    #modal .box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: min(1100px, 96vw);
+                  max-height: 94vh; overflow: auto; padding: 12px 14px; }
+    #modal .hd { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 8px; }
+    #modal .hd h3 { margin: 0; font-size: 18px; } #modal .hd .grow { flex: 1; }
+    #mchart { height: 440px; }
+    .seg2 button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); padding: 4px 10px; cursor: pointer; }
+    .seg2 button.on { border-color: var(--accent); color: #fff; }
+    .mlegend { font-size: 12px; color: var(--dim); margin-top: 6px; } .mlegend b { font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>📈 Swing picks</h1>
+    <span class="pill paper">PAPER TRADING — not for real money yet</span>
+    <span class="pill" id="asof">…</span>
+    <span class="grow"></span>
+    <button class="b" id="btn-notify">🔔 Enable alerts</button>
+    <button class="b" id="btn-refresh" title="Fetch the latest NSE file and recompute">⟳ Refresh</button>
+    <a class="b" href="/" style="text-decoration:none;padding:6px 10px">← Chart</a>
+  </div>
+
+  <div class="card action" id="todo"><h2>What to do now</h2><div id="todo-body" class="dim">Loading…</div></div>
+
+  <div class="card">
+    <h2>Open positions <span class="note" id="pos-note"></span></h2>
+    <div class="tbl-scroll"><table id="pos"></table></div>
+  </div>
+
+  <div class="card">
+    <h2>Ranking <span class="note" id="rank-note"></span></h2>
+    <div class="tbl-scroll"><table id="rank"></table></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card"><h2>Alerts <span class="note">newest first</span></h2><div id="events"></div></div>
+    <div class="card">
+      <h2>Live paper results <span class="note" id="live-note"></span></h2>
+      <div class="kv" id="tally"></div>
+      <div class="tbl-scroll" style="margin-top:10px"><table id="closed"></table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>How it was tested <span class="note">walk-forward backtest, after 0.7 % costs per trade</span></h2>
+    <p class="warn" id="verdict"></p>
+    <div id="eq"></div>
+    <div class="grid2" style="margin-top:10px">
+      <div><table id="periods"></table><p class="dim" id="years"></p></div>
+      <div><table id="bench"></table></div>
+    </div>
+    <details style="margin-top:8px"><summary>The rules</summary><div id="rules" class="dim"></div></details>
+  </div>
+</div>
+<div id="modal"><div class="box">
+  <div class="hd"><h3 id="m-sym"></h3><span id="m-ltp" class="pill"></span>
+    <span class="seg2"><button data-v="daily" class="on">Daily</button><button data-v="intraday">Today 5-min (live)</button></span>
+    <span class="grow"></span><a class="b" id="m-tv" target="_blank" rel="noopener" style="text-decoration:none;padding:4px 10px">TradingView ↗</a>
+    <button class="b" id="m-close">✕</button></div>
+  <div id="mchart"></div>
+  <div class="mlegend" id="m-legend"></div>
+  <div id="m-info" style="margin-top:8px"></div>
+</div></div>
+<script src="js/swing.js"></script>
+</body>
+</html>

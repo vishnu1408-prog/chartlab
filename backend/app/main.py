@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 import datetime as dt
 from pathlib import Path
 
-from . import backtest, chain, config, edge, harmonic_scan, news, options, sources, store, symbols, sync
+from . import analytics, backtest, bots, chain, config, db, edge, events, flows, oi, harmonic_scan, news, options, opthist, paper, sources, store, strategy, swing, symbols, sync
 from .indicators import registry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -25,6 +25,7 @@ log = logging.getLogger("chartlab")
 @asynccontextmanager
 async def lifespan(_app):
     news.connect().close()
+    db.start()                                   # SQLite records (imports old JSON once) + nightly backup
     imp = Path(config.DATA_DIR) / "news_import.csv"              # headlines saved by the research logger
     if imp.exists():
         news.import_csv(imp)
@@ -35,6 +36,13 @@ async def lifespan(_app):
                 sync.backfill_async(m)
         threading.Thread(target=news.rss_loop, daemon=True).start()
         edge.start()                             # Morning Edge: NSE EOD files + the 09:45 decision
+        swing.start()                            # swing picks: NSE bhavcopy every evening, Friday picks (paper)
+        paper.start()                            # live option paper trading: stops / targets / square-off monitor
+        opthist.start()                          # NIFTY option 1-minute history from Angel, every evening
+        bots.start()                             # Gann / Daily Plan bots paper-trade their signals
+        events.start()                           # economic calendar (ForexFactory, Fed) for chart markers
+        flows.start()                            # FII / DII cash (NSE, evenings) + NSDL FPI
+        oi.start()                               # NIFTY / SENSEX OI snapshots every 3 min (PCR, max pain)
     yield
 
 
@@ -91,12 +99,20 @@ def do_sync(symbol: str, force: bool = False):
     return sync.sync_symbol(symbol, force=force)
 
 
+def _stale(symbol: str, hours: float = 2) -> bool:
+    m = store.minute_bars(symbol)
+    return not len(m) or m.index.max() < pd.Timestamp(sync.now_ist().replace(tzinfo=None)) - pd.Timedelta(hours=hours)
+
+
 @app.get("/api/candles")
 def candles(symbol: str, tf: str = "5", limit: int = Query(1500, ge=1, le=20000),
             before: int | None = None, start: int | None = None, end: int | None = None):
     _sym(symbol), _tf(tf)
     if before is None and start is None:
-        sync.sync_async(symbol)                        # keep recent data fresh in the background (no-op if fresh)
+        if symbol in symbols.GLOBAL and sync.market_open(sym=symbol) and _stale(symbol):
+            sync.sync_symbol(symbol)                   # gold / BTC (Yahoo / Binance): fill a gap of days BEFORE drawing
+        else:
+            sync.sync_async(symbol)                    # keep recent data fresh in the background (no-op if fresh)
     df = store.bars(symbol, tf)
     w = store.window(df, start=start, end=end, limit=limit, before=before)
     has_more = len(w) > 0 and len(df) > 0 and w.index[0] > df.index[0]
@@ -115,13 +131,14 @@ def option_chain(symbol: str, expiry: str | None = None, n: int = 10):
 
 
 @app.get("/api/option")
-def option_contract(symbol: str, time: int, type: str = "CE", spot: float | None = None, strike: float | None = None):
+def option_contract(symbol: str, time: int, type: str = "CE", spot: float | None = None, strike: float | None = None,
+                    expiry_mode: str = Query("nearest", pattern="^(nearest|real)$")):
     """ATM option premium bars (real dataset prices when available, else Black-Scholes) for practice trading."""
     _sym(symbol)
     if type.upper() not in ("CE", "PE"):
         raise HTTPException(400, "type must be CE or PE")
     try:
-        return options.contract(symbol, time, type, spot, strike)
+        return options.contract(symbol, time, type, spot, strike, expiry_mode=expiry_mode)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -361,8 +378,9 @@ def compute_indicator(ind_id, symbol, tf, start=None, end=None, params=None):
         df = df[df.index <= store.from_epoch(end)]
     key = json.dumps([ind_id, symbol, tf, start, end, p, len(df), str(df.index[-1]) if len(df) else "",
                       float(df.close.iloc[-1]) if len(df) else 0, getattr(ind, "file", "")], sort_keys=True, default=str)
+    cacheable = getattr(ind, "cache", True)         # e.g. footprint: its data arrives in the background
     with _ilock:
-        if key in _icache:
+        if cacheable and key in _icache:
             _icache.move_to_end(key)
             return _icache[key]
     df.attrs["symbol"] = symbol                    # for indicators that need finer bars of the same symbol
@@ -384,9 +402,9 @@ def compute_indicator(ind_id, symbol, tf, start=None, end=None, params=None):
 def edge_status():
     """Morning Edge: background-job state, today's 09:45 decision and the model's training info."""
     m = edge.load_model()
-    today = edge.DIR / "signals" / f"{sync.now_ist().date()}.json"
+    today = db.edge_get(str(sync.now_ist().date()))
     return {**edge.status, "model": m["meta"] if m else None,
-            "today": json.loads(today.read_text()) if today.exists() else edge.status.get("today") or _edge_pending()}
+            "today": today or edge.status.get("today") or _edge_pending()}
 
 
 def _edge_pending():
@@ -400,6 +418,234 @@ def _edge_pending():
         return {"note": "deciding now (09:45–09:52)…"}
     return {"note": "no decision today — the 09:45–09:52 window was missed (ChartLab or live data was down) or it was a "
                     "holiday; the day is skipped and not counted"}
+
+
+@app.get("/api/swing")
+def swing_status():
+    return JSONResponse(json.loads(json.dumps(swing.snapshot(), default=str)))
+
+
+@app.get("/api/swing/chart")
+def swing_chart(sym: str = Query(..., pattern=r"^[A-Z0-9&\-]{1,20}$")):
+    try:
+        return JSONResponse(json.loads(json.dumps(swing.chart(sym), default=str)))
+    except KeyError:
+        raise HTTPException(404, f"no data for {sym}")
+
+
+@app.post("/api/swing/start")
+def swing_start():
+    return swing.kickstart()
+
+
+@app.post("/api/swing/update")
+def swing_update():
+    if swing.status.get("state") == "updating":
+        return {"state": "updating"}
+    threading.Thread(target=swing.update, kwargs={"force_rank": True}, daemon=True).start()
+    return {"state": "started"}
+
+
+def _paper(fn, *a):
+    try:
+        return JSONResponse(json.loads(json.dumps(fn(*a), default=str)))
+    except KeyError as e:
+        raise HTTPException(404, f"not found: {e}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/sql")
+def sql_query(body: dict = Body(...)):
+    try:
+        return JSONResponse(json.loads(json.dumps(analytics.query(str(body.get("sql", ""))), default=str)))
+    except Exception as e:                               # bad SQL → message for the user, not a server error
+        return JSONResponse({"error": str(e)[:600]}, status_code=400)
+
+
+@app.get("/api/sql/tables")
+def sql_tables():
+    return {"tables": analytics.tables(), "examples": [{"name": n, "sql": q} for n, q in analytics.EXAMPLES]}
+
+
+@app.get("/api/opthist")
+def opthist_status():
+    roots = {r: {"expiries": (m := opthist._meta(r))["expiries"], "contracts": len(m["last"])} for r in opthist.ROOTS}
+    return {**opthist.status, "roots": roots}
+
+
+@app.post("/api/opthist/backfill")
+def opthist_backfill(full: bool = True, max_expiries: int | None = None, roots: str = "NIFTY"):
+    rs = tuple(r for r in roots.upper().split(",") if r in opthist.ROOTS)
+    if not rs:
+        raise HTTPException(400, f"roots: any of {', '.join(opthist.ROOTS)}")
+    opthist.run_async(full, max_expiries=max_expiries, roots=rs)
+    return {"started": True, "roots": rs}
+
+
+@app.get("/api/option/resolve")
+def option_resolve(q: str):
+    from . import optsym
+    n = optsym.resolve(q)
+    if not n:
+        raise HTTPException(404, f"no option contract matches {q!r} (try e.g. 'NIFTY 23100 CE' or 'RELIANCE 27-Oct-26 1210 PE')")
+    return {"symbol": n}
+
+
+AT_RE = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$"
+DAY_RE = "^\\d{4}-\\d{2}-\\d{2}$"
+
+
+@app.get("/api/oi/chain")
+def oi_chain(symbol: str = "NIFTY 50", expiry: str | None = None, at: str | None = Query(None, pattern=AT_RE)):
+    """Live chain (saved as it is seen), or with at=YYYY-MM-DDTHH:MM the recorded chain of that minute."""
+    try:
+        c = oi.stored_chain(symbol, at, expiry) if at else oi.live_chain(symbol, expiry)
+        return JSONResponse(json.loads(json.dumps(c, default=str)))
+    except KeyError as e:
+        raise HTTPException(404, f"no options for {e}")
+
+
+@app.get("/api/oi/history")
+def oi_history(symbol: str = "NIFTY 50", day: str | None = Query(None, pattern=DAY_RE), expiry: str | None = None):
+    return {"rows": oi.history(symbol, day, expiry)}
+
+
+@app.get("/api/oi/days")
+def oi_days(symbol: str = "NIFTY 50"):
+    return oi.days(symbol)
+
+
+@app.get("/api/oi/times")
+def oi_times(symbol: str = "NIFTY 50", day: str = Query(..., pattern=DAY_RE)):
+    return oi.times(symbol, day)
+
+
+@app.get("/api/screener")
+def screener(at: str | None = Query(None, pattern=AT_RE)):
+    return oi.stored_screener(at) if at else oi.screener_cached()
+
+
+@app.get("/api/screener/times")
+def screener_times(day: str | None = Query(None, pattern=DAY_RE)):
+    return {"days": oi.screener_days(), "times": oi.screener_times(day) if day else []}
+
+
+@app.get("/api/events")
+def events_list(days: int = Query(14, ge=1, le=120), markets: str = "in,us,nse,mcx,eia"):
+    now = sync.now_ist()
+    ev = events.events(now - dt.timedelta(hours=12), now + dt.timedelta(days=days), set(markets.split(",")), "Medium")
+    return {"events": [{**e, "ts": e["ts"].isoformat(timespec="minutes")} for e in ev], "custom": events.custom()}
+
+
+@app.post("/api/events/custom")
+def events_add(body: dict = Body(...)):
+    try:
+        return {"id": events.add_custom(str(body["ts"]), str(body["title"]), str(body.get("country", "IN")),
+                                        str(body.get("impact", "High")))}
+    except (KeyError, ValueError) as e:
+        raise HTTPException(422, f"need ts (YYYY-MM-DDTHH:MM) and title: {e}")
+
+
+@app.delete("/api/events/custom/{i}")
+def events_delete(i: int):
+    events.delete_custom(i)
+    return {"deleted": i}
+
+
+@app.get("/api/flows")
+def flows_summary(days: int = Query(60, ge=5, le=2000)):
+    """FII / DII cash-market flows (NSE provisional + NSDL FPI) and participant-wise F&O positions."""
+    return flows.summary(days)
+
+
+@app.post("/api/flows/update")
+def flows_update():
+    out = {}
+    for k, f in (("cash", flows.update_cash), ("fpi", flows.update_fpi)):
+        try:
+            out[k] = f()
+        except Exception as e:
+            out[k] = f"error: {e}"[:200]
+    return out
+
+
+@app.get("/api/bots")
+def bots_status():
+    return bots.status
+
+
+@app.get("/api/paper")
+def paper_get(account: str = "manual"):
+    return _paper(paper.snapshot, account)
+
+
+@app.get("/api/paper/stocks")
+def paper_stocks():
+    return {"stocks": paper.stock_names()}
+
+
+@app.get("/api/paper/contracts")
+def paper_contracts(symbol: str, expiry: str | None = None):
+    return _paper(paper.contract_list, symbol, expiry)
+
+
+@app.get("/api/paper/quote")
+def paper_quote(symbol: str, expiry: str, strike: float, type: str = Query(..., pattern="^(CE|PE)$"), account: str = "manual"):
+    return _paper(paper.quote, symbol, expiry, strike, type, account)
+
+
+@app.post("/api/paper/order")
+def paper_order(body: dict = Body(...), account: str = "manual"):
+    if body.get("side") not in ("BUY", "SELL") or body.get("type") not in ("CE", "PE"):
+        raise HTTPException(422, "side BUY/SELL and type CE/PE required")
+    return _paper(paper.order, account, body)
+
+
+@app.post("/api/paper/exit/{pid}")
+def paper_exit(pid: str, account: str = "manual", lots: int | None = None):
+    return _paper(paper.exit_position, account, pid, lots)
+
+
+@app.post("/api/strategy/quote")
+def strategy_quote(body: dict = Body(...)):
+    try:
+        return _paper(strategy.quote, body)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/strategy/order")
+def strategy_order(body: dict = Body(...)):
+    try:
+        return _paper(strategy.order, body)
+    except ValueError as e:
+        return JSONResponse({"status": "rejected", "reason": str(e)}, status_code=400)
+
+
+@app.post("/api/strategy/exit/{gid}")
+def strategy_exit(gid: str):
+    return _paper(paper.exit_strategy, "manual", gid)
+
+
+@app.post("/api/paper/modify/{pid}")
+def paper_modify(pid: str, body: dict = Body(...), account: str = "manual"):
+    return _paper(paper.modify, account, pid, body)
+
+
+@app.post("/api/paper/cancel/{oid}")
+def paper_cancel(oid: str, account: str = "manual"):
+    return _paper(paper.cancel, account, oid)
+
+
+@app.post("/api/paper/settings")
+def paper_settings(body: dict = Body(...), account: str = "manual"):
+    return _paper(paper.set_settings, account, body)
+
+
+@app.post("/api/paper/reset")
+def paper_reset(account: str = "manual", capital: float | None = None):
+    return _paper(paper.reset, account, capital)
 
 
 @app.post("/api/indicators/{ind_id}/compute")
@@ -435,27 +681,23 @@ def put_drawings(symbol: str, items: list = Body(...)):
     return {"saved": len(items)}
 
 
-JOURNAL = config.DATA_DIR / "journal.json"
-
-
 @app.get("/api/journal")
 def get_journal():
-    return json.loads(JOURNAL.read_text()) if JOURNAL.exists() else []
+    """practice / replay trades + every closed live paper trade (all accounts, mode "paper", tag = account)"""
+    return db.journal_all() + paper.journal_rows()
 
 
 @app.post("/api/journal")
 def add_journal(trade: dict = Body(...)):
-    j = get_journal()
     trade = {k: trade[k] for k in trade if k in {"id", "symbol", "tf", "side", "qty", "entry", "exit", "entry_time", "exit_time",
                                                  "pnl_pts", "pnl_rs", "reason", "mode", "note", "sl", "tp", "session", "tag", "instrument", "blind"}}
-    j.append(trade)
-    JOURNAL.write_text(json.dumps(j[-5000:]))
-    return {"count": len(j)}
+    db.journal_add(trade)
+    return {"count": len(get_journal())}
 
 
 @app.delete("/api/journal")
 def clear_journal():
-    JOURNAL.write_text("[]")
+    db.journal_clear()                                   # practice trades only; paper trades stay with their accounts
     return {"count": 0}
 
 

@@ -58,6 +58,7 @@ body.picking .chart, body.picking .chart * { cursor: copy !important; }
 #draw-props { position: absolute; top: 8px; right: 80px; z-index: 6; display: flex; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
 #draw-props label { display: flex; gap: 4px; align-items: center; font-size: 12px; }
 #draw-props input[type=number] { width: 52px; } #draw-props input[type=text] { width: 140px; }
+#draw-props .dp-fib:not([hidden]) { display: flex; gap: 6px; align-items: center; }
 #draw-props input[type=color] { width: 28px; height: 22px; padding: 0; border: none; }
 
 #replay-bar { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 4px;
@@ -77,6 +78,10 @@ body.no-side #practice { display: none; }
 .pt-buy { background: var(--up); color: #fff; font-weight: 600; } .pt-sell { background: var(--down); color: #fff; font-weight: 600; }
 .pt-buy:hover { background: #2bbbad; } .pt-sell:hover { background: #f26b68; }
 .pt-close { border-color: var(--border); }
+.pt-sellrow { grid-template-columns: 1fr 1fr; margin-top: 6px; }
+.pt-sellce, .pt-sellpe { background: transparent; font-weight: 600; }
+.pt-sellce { color: var(--down); border-color: var(--down); } .pt-sellpe { color: var(--up); border-color: var(--up); }
+.pt-sellce:hover { background: rgba(239, 83, 80, 0.15); } .pt-sellpe:hover { background: rgba(38, 166, 154, 0.15); }
 .pt-pos, .pt-stats { font-size: 12px; background: var(--panel); border-radius: 4px; padding: 6px; }
 .pt-note { font-size: 11px; }
 .pt-trades { flex: 1; overflow-y: auto; font-size: 11px; }
@@ -119,7 +124,7 @@ th, td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: l
 }
 
 .pt-inst { width: 100%; } .pt-inst button { flex: 1; }
-.rp-mode { font-size: 12px; }
+.rp-mode, .rp-year { font-size: 12px; }
 .btn-auto { position: absolute; right: 4px; bottom: 30px; z-index: 6; width: 24px; height: 22px; padding: 0; font-size: 12px; font-weight: 600;
   border: 1px solid var(--border); background: var(--panel); color: var(--dim); }
 .btn-auto.on { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -253,3 +258,38 @@ body.blind .nw-status { visibility: hidden; }
 .ch-table td.oi span { position: relative; }
 .ch-bar { position: absolute; top: 3px; bottom: 3px; opacity: .22; }
 .ch-bar.ce { right: 0; background: #26a69a; } .ch-bar.pe { left: 0; background: #ef5350; }
+
+/* live paper trading tab */
+#practice[data-tab="paper"] { width: 430px; max-width: 100vw; }
+#practice[data-tab="paper"] #tab-paper { display: flex; }
+#tab-paper .pp-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+#tab-paper select, #tab-paper input[type=number], #tab-paper input[type=text] { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px; }
+#tab-paper input[type=number] { width: 72px; }
+#tab-paper .pp-note { width: 100%; box-sizing: border-box; }
+#tab-paper .pp-ticket { display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+#tab-paper .pp-buy { background: var(--up); color: #fff; border: 0; border-radius: 4px; padding: 7px; font-weight: 700; cursor: pointer; }
+#tab-paper .pp-buy:disabled { opacity: .5; cursor: default; }
+#tab-paper .pp-buy.sell { background: var(--down); }
+#tab-paper .pp-side button.on[data-s="SELL"] { background: var(--down); color: #fff; }
+#tab-paper .pp-warn { color: #f5a623; }
+#tab-paper .pp-risk label { display: flex; gap: 4px; align-items: center; }
+#tab-paper .pp-risk input { width: 62px; }
+#tab-paper .pp-acct { width: 100%; } #tab-paper .pp-acct button { flex: 1; }
+#tab-paper .pp-sum b { font-size: 13px; }
+#tab-paper .pp-card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; font-size: 12px; }
+#tab-paper .pp-card .hd { display: flex; justify-content: space-between; gap: 6px; }
+#tab-paper .pp-card button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
+#tab-paper .pp-card button.x { border-color: var(--down); color: var(--down); }
+#tab-paper .pp-card .lv { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+#tab-paper .pp-card .lv input { width: 70px; }
+#tab-paper table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+#tab-paper td, #tab-paper th { padding: 2px 3px; border-bottom: 1px solid var(--border); text-align: left; }
+#tab-paper th { color: var(--dim); font-weight: 500; }
+#tab-paper td.n { text-align: right; }
+#tab-paper h5 { margin: 6px 0 3px; font-size: 12px; color: var(--dim); font-weight: 600; }
+.ch-table td.ltp.pick { cursor: pointer; } .ch-table td.ltp.pick:hover { outline: 1px solid var(--accent); }
+#tab-paper .pp-stock.on { border-color: var(--accent); color: #fff; }
+#tab-paper .pp-note.need { border-color: var(--down); box-shadow: 0 0 0 1px var(--down); }
+#tab-paper .pp-note::placeholder { color: #c58b8b; }
+.ch-table .och { cursor: pointer; font-size: 9px; opacity: .55; margin-right: 3px; } .ch-table .och:hover { opacity: 1; }
+#tab-paper .pp-chart { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; cursor: pointer; font-size: 11px; }

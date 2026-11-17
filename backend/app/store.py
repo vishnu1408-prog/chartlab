@@ -123,6 +123,10 @@ def load_base(sym: str) -> pd.DataFrame:
     Angel One yearly downloads for MCX), cached as parquet."""
     s = symbols.get(sym)
     p = _base_path(sym)
+    if s.kind == "option":                           # saved 1-minute option premiums (read fresh: files grow nightly)
+        from . import optsym
+        h = optsym.history(sym)
+        return _clean(h, se=sess(sym)) if len(h) else empty()
     sources = ([Path(f) for f in (s.file,) if f] + [x for x in (_hf_path(s),) if x is not None] + _binance_files(s)
                + _angel_files(s))
     if p.exists() and all(p.stat().st_mtime >= f.stat().st_mtime for f in sources):
@@ -159,7 +163,10 @@ def save_ext(sym: str, new: pd.DataFrame, res: str = "1") -> int:
     new = _clean(new, daily=res == "D", se=se)
     with _lock:
         merged = _clean(pd.concat([load_ext(sym, res), new]), daily=res == "D", se=se)
-        merged.to_parquet(ext_path(sym, res))
+        p = ext_path(sym, res)
+        tmp = p.with_name(p.name + ".part")
+        merged.to_parquet(tmp)
+        tmp.replace(p)                                   # atomic: readers in other threads never see half a file
         _cache.pop(sym, None)
     return len(new)
 

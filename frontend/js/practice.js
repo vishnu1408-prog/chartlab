@@ -2,13 +2,19 @@
 // P&L in points and ₹, your discipline rules, setup tags, and a journal saved on the server.
 // Two instruments:
 //   Index      — trade the index / stock price itself.
-//   ATM option — BUY = buy the at-the-money CE, SELL = buy the ATM PE (option buyer, like real index option trading).
+//   ATM option — BUY = buy the at-the-money CE, SELL = buy the ATM PE (option buyer, like real index option trading);
+//                SELL CE / SELL PE = write the option (short: you receive the premium, stop ABOVE the sell price).
 //                Prices: real 1-minute option prices from the dataset when available, else Black-Scholes (India VIX,
 //                real time to expiry → theta). Stop / target are in OPTION points.
 import { api, store } from "./api.js";
 import { PaperEngine, anchorOf, fmtPrice, fmtTime, spanBar, priceAt } from "./core.js";
 import { esc } from "./indicators.js";
 import { Rules, checkOrder, dayStats } from "./rules.js";
+
+// option practice per symbol: strike step, and units per lot for MCX options (premium × units = ₹)
+const OPT = { "NIFTY 50": { step: 50 }, "NIFTY BANK": { step: 100 }, "SENSEX": { step: 100 },
+  "MCX CRUDEOIL": { step: 50, lot: 100 }, "MCX GOLD": { step: 500, lot: 100 }, "MCX SILVER": { step: 1000, lot: 30 },
+  "MCX NATURALGAS": { step: 5, lot: 1250 } };
 
 export const TAGS = ["—", "Harmonic", "Breakout", "Pullback", "Reversal", "Range", "News", "Gap", "Other"];
 
@@ -31,12 +37,16 @@ export class PracticePanel {
     $(".pt-tag").innerHTML = TAGS.map((t) => `<option>${t}</option>`).join("");
     $(".pt-buy").onclick = () => this.order(1);
     $(".pt-sell").onclick = () => this.order(-1);
+    $(".pt-sellce").onclick = () => this.orderOption("CE", -1);
+    $(".pt-sellpe").onclick = () => this.orderOption("PE", -1);
     $(".pt-close").onclick = () => this.closeAll();
     $(".pt-reset").onclick = () => this.reset();
     $(".pt-cost").onchange = (e) => (this.engine.costPerTrade = Number(e.target.value) || 0);
     $(".pt-journal").onclick = () => this.app.stats.open();
     $(".pt-rules").onclick = () => this.rules.open();
     this.el.querySelectorAll(".pt-inst button").forEach((b) => (b.onclick = () => this.setInstrument(b.dataset.inst)));
+    $(".pt-expmode").value = store.get("ptExpMode", "nearest");
+    $(".pt-expmode").onchange = (e) => store.set("ptExpMode", e.target.value);
     this.setInstrument(this.instrument);
   }
 
@@ -56,7 +66,7 @@ export class PracticePanel {
     if (this.engine.pos) { this.app.toast("Close the open position before switching", "error"); return; }
     const sym = this.app.symbols?.find((x) => x.symbol === this.app.tradePanel?.state.symbol);
     if (inst === "option" && sym && !sym.options) {
-      this.app.toast("Option practice: NIFTY 50, NIFTY BANK or SENSEX", "error");
+      this.app.toast("Option practice: NIFTY 50, NIFTY BANK, SENSEX, MCX crude oil / gold / silver / natural gas", "error");
       inst = "index";
     }
     this.instrument = inst;
@@ -66,10 +76,26 @@ export class PracticePanel {
     this.$(".pt-sell").textContent = inst === "option" ? "BUY PE" : "SELL";
     this.$(".lbl-sl").textContent = inst === "option" ? "SL (opt pts)" : "SL pts";
     this.$(".lbl-tp").textContent = inst === "option" ? "Target (opt pts)" : "Target pts";
+    this.$(".pt-optrow").style.display = inst === "option" ? "" : "none";
+    this.$(".pt-sellrow").style.display = inst === "option" ? "" : "none";
+    if (inst === "option") this.optStrikes(sym);
     this.$(".pt-note").textContent = inst === "option"
-      ? "Buys the at-the-money weekly option. Real option prices when the dataset has them, otherwise a Black-Scholes estimate (India VIX, theta included). Fills at the last revealed price ± slippage. Auto square-off 15:15."
+      ? `BUY CE / BUY PE buy the chosen strike, SELL CE / SELL PE write it (short — premium received, stop above the sell price, risk not limited; real margin ≈ ₹1–1.5 lakh per index lot) (ITM = lower strike for CE, higher for PE)${OPT[sym?.symbol]?.lot ? ` — MCX: Qty = units, 1 lot = ${OPT[sym.symbol].lot}` : ""}. Real option prices when saved data has them, otherwise a Black-Scholes estimate (India VIX for indices, the futures' own recent volatility for MCX; theta included). Fills at the last revealed price ± slippage. Auto square-off ${this.engine.sqLabel}.`
       : `Fills at the last revealed price ± slippage. Stop beats target inside one bar. Drag the SL / TP lines on the chart to move them. Auto square-off ${this.engine.sqLabel}.`;
     this.render();
+  }
+
+  /** strike choices for the symbol: index options in points (ITM 100 / 200), MCX in strikes (step varies) */
+  optStrikes(sym) {
+    const o = OPT[sym?.symbol];
+    if (!o) return;
+    const sel = this.$(".pt-strike"), keep = store.get("ptStrikeN", 0);
+    const idx = !o.lot;
+    const opts = idx ? [["ATM", 0], ["ITM 100", -100], ["ITM 200", -200], ["OTM 100", 100]]
+                     : [["ATM", 0], ["ITM 1 strike", -o.step], ["ITM 2 strikes", -2 * o.step], ["OTM 1 strike", o.step]];
+    sel.innerHTML = opts.map(([l, v], i) => `<option value="${v}" data-n="${i}"${i === keep ? " selected" : ""}>${l}</option>`).join("");
+    sel.onchange = () => store.set("ptStrikeN", sel.selectedIndex);
+    if (o.lot && !this.engine.pos) this.setLot(o.lot);
   }
 
   symbolChanged(sym) {
@@ -121,23 +147,49 @@ export class PracticePanel {
         this.app.toast(`${side > 0 ? "BUY" : "SELL"} ${qty} @ ${fmtPrice(fill)}`);
         return this.render();
       }
-      if (!this.app.replay.active) return this.app.toast("Option mode works in replay (live option prices need Angel One)", "error");
-      const type = side > 0 ? "CE" : "PE";
-      if (this.engine.pos) {                         // switching CE↔PE: close the current contract first
-        if (this.contract && this.contract.type === type) return this.app.toast(`Already holding the ${type} — Close first to re-enter`, "error");
-        this.closeAll("switch");
-      }
-      const t = this.lastTime;
-      const c = await api.option({ symbol: this.app.tradePanel.state.symbol, time: t, type, spot: this.price });
-      const fill = c.premium + slip;
-      this.contract = c;
-      this.meta = { ...meta, contract: `${c.strike} ${c.type} exp ${c.expiry} (${c.source})` };
-      this.engine.order(1, qty, fill, t, { sl: slPts > 0 ? fill - slPts : null, tp: tpPts > 0 ? fill + tpPts : null });
-      this.engine.lastBar = { time: t, open: fill, high: fill, low: fill, close: fill };
-      this.app.toast(`BUY ${qty} ${meta.symbol} ${c.strike} ${type} (exp ${c.expiry}) @ ₹${fmtPrice(fill)} — ${c.source === "real" ? "real price" : "model price"}${c.note ? " · " + c.note : ""}`);
+      return this.orderOption(side > 0 ? "CE" : "PE", 1);
     } catch (e) { this.app.toast(e.message, "error"); }
     this.render();
   }
+
+  /** option practice order: dir 1 = buy the option, −1 = sell (write) it */
+  async orderOption(type, dir) {
+    if (this.price == null) return this.app.toast("No price yet", "error");
+    if (!this.optionMode) return this.app.toast("Switch to Option mode to sell options", "error");
+    const $ = this.$;
+    const qty = Number($(".pt-qty").value);
+    const slPts = Number($(".pt-sl").value), tpPts = Number($(".pt-tp").value), slip = Number($(".pt-slip").value) || 0;
+    if (!this.allowed(qty, slPts)) return;
+    const meta = { tag: $(".pt-tag").value, note: $(".pt-note-in").value.trim(), symbol: this.app.tradePanel.state.symbol, blind: this.app.replay.blind };
+    const act = dir > 0 ? "BUY" : "SELL";
+    try {
+      if (!this.app.replay.active) return this.app.toast("Option mode works in replay (live option prices need Angel One)", "error");
+      if (this.engine.pos) {                         // a different contract or direction: close the current one first
+        if (this.contract && this.contract.type === type && (this.contract.dir || 1) === dir)
+          return this.app.toast(`Already ${dir > 0 ? "holding" : "short"} the ${type} — Close first to re-enter`, "error");
+        this.closeAll("switch");
+      }
+      const t = this.lastTime;
+      const off = Number(this.$(".pt-strike").value) || 0, step = OPT[this.sym?.symbol]?.step ?? 100;
+      const atm = Math.round(this.price / step) * step;
+      const strike = off ? atm + (type === "CE" ? off : -off) : null;      // ITM 200: CE atm − 200, PE atm + 200
+      const c = await api.option({ symbol: this.app.tradePanel.state.symbol, time: t, type, spot: this.price,
+        ...(strike ? { strike } : {}), expiry_mode: this.$(".pt-expmode").value });
+      const fill = dir > 0 ? c.premium + slip : Math.max(c.premium - slip, 0.05);   // a seller gets the bid side
+      this.contract = { ...c, dir };
+      this.meta = { ...meta, contract: `${act} ${c.strike} ${c.type} exp ${c.expiry} (${c.source})` };
+      const sl = slPts > 0 ? fill - dir * slPts : null;                            // short: stop ABOVE the sell price
+      const tp = tpPts > 0 ? Math.max(fill + dir * tpPts, 0.05) : null;            // short: target BELOW it
+      this.engine.order(dir, qty, fill, t, { sl, tp });
+      this.engine.lastBar = { time: t, open: fill, high: fill, low: fill, close: fill };
+      const margin = dir < 0 ? ` · ⚠ uncovered — real margin ≈ ₹${fmtPrice(Math.round(this.price * qty * 0.11 / 1000) * 1000, 0)}, loss not limited` : "";
+      this.app.toast(`${act} ${qty} ${meta.symbol} ${c.strike} ${type} (exp ${c.expiry}) @ ₹${fmtPrice(fill)} — ${c.source === "real" ? "real price" : "model price"}${c.note ? " · " + c.note : ""}${margin}`);
+    } catch (e) { this.app.toast(e.message, "error"); }
+    this.render();
+  }
+
+  /** label of the open / closed option position: "BUY CE", "SELL PE" … or "index" */
+  instLabel(c = this.contract) { return c ? `${(c.dir || 1) < 0 ? "SELL" : "BUY"} ${c.type}` : "index"; }
 
   closeAll(reason = "manual") {
     const slip = Number(this.$(".pt-slip").value) || 0;
@@ -159,7 +211,7 @@ export class PracticePanel {
 
   after(closed) {
     for (const t of closed) {
-      const rec = { ...t, ...(this.meta || {}), instrument: this.contract ? `BUY ${this.contract.type}` : "index" };
+      const rec = { ...t, ...(this.meta || {}), instrument: this.instLabel() };
       this.done.push(rec);
       this.journal(rec);
     }
@@ -202,15 +254,17 @@ export class PracticePanel {
     for (const q of this.app.panels) q.view.markerSources.trades = [];
     const sym = tp.state.symbol, mk = [];
     const add = (t, entry, exitInfo) => {
-      const long = String(t.instrument || t.side).includes("CE") || t.side === "BUY";
+      const inst = String(t.instrument || "index"), opt = inst !== "index";
+      const sold = inst.startsWith("SELL ");
+      const long = opt ? (inst.endsWith("CE") !== sold) : t.side === "BUY";     // bullish: bought CE or sold PE
       mk.push({ time: t.entry_time, known: t.entry_time, position: long ? "belowBar" : "aboveBar", shape: long ? "arrowUp" : "arrowDown",
-                color: "#2962ff", text: t.instrument && t.instrument !== "index" ? t.instrument.replace("BUY ", "") : long ? "B" : "S" });
+                color: sold ? "#ff9800" : "#2962ff", text: opt ? (sold ? "−" : "") + inst.replace(/^(BUY|SELL) /, "") : long ? "B" : "S" });
       if (exitInfo) mk.push({ time: t.exit_time, known: t.exit_time, position: long ? "aboveBar" : "belowBar", shape: "circle",
                               color: t.pnl_rs >= 0 ? "#26a69a" : "#ef5350", text: `${t.pnl_rs >= 0 ? "+" : ""}${Math.round(t.pnl_rs)}` });
     };
     for (const t of this.done) if (t.symbol === sym) add(t, true, true);
     const p = this.engine.pos;
-    if (p && this.meta?.symbol === sym) add({ entry_time: p.time, side: p.side > 0 ? "BUY" : "SELL", instrument: this.contract ? `BUY ${this.contract.type}` : "index" }, true, false);
+    if (p && this.meta?.symbol === sym) add({ entry_time: p.time, side: p.side > 0 ? "BUY" : "SELL", instrument: this.instLabel() }, true, false);
     tp.view.markerSources.trades = mk;
     for (const q of this.app.panels) q.indicators.updateMarkers();
   }
@@ -259,14 +313,16 @@ export class PracticePanel {
       if (p.sl != null) v.addPriceLine(p.sl, "#ef5350", "SL ⇕");
       if (p.tp != null) v.addPriceLine(p.tp, "#26a69a", "TP ⇕");
     } else if (p && c) {
-      v.addPriceLine(c.spot, c.type === "CE" ? "#26a69a" : "#ef5350", `${c.strike} ${c.type} entry`);
+      const bull = (c.type === "CE") === ((c.dir || 1) > 0);
+      v.addPriceLine(c.spot, bull ? "#26a69a" : "#ef5350", `${(c.dir || 1) < 0 ? "SOLD " : ""}${c.strike} ${c.type} entry`);
     }
     const u = mark != null ? e.unrealized(mark) : 0;
     const brackets = p ? `<div class="pt-brk">SL <input type="number" step="0.05" class="pt-esl" value="${p.sl ?? ""}"> TP <input type="number" step="0.05" class="pt-etp" value="${p.tp ?? ""}">
         <button class="pt-be" title="Move the stop to your entry price">BE</button></div>` : "";
     if (p && c) {
-      $(".pt-pos").innerHTML = `<b class="${c.type === "CE" ? "up" : "down"}">${esc(tp.state.symbol)} ${c.strike} ${c.type}</b> <span class="dim">exp ${esc(c.expiry)} · ${c.source === "real" ? "real price" : "model"}</span><br>
-        ${p.qty} @ ₹${fmtPrice(p.entry)} → ₹${fmtPrice(mark)} <span class="${u >= 0 ? "up" : "down"}">${u >= 0 ? "+" : ""}₹${fmtPrice(u, 0)} (${fmtPrice(mark - p.entry)} pts)</span>${brackets}`;
+      const sold = (c.dir || 1) < 0, bull = (c.type === "CE") !== sold;
+      $(".pt-pos").innerHTML = `<b class="${bull ? "up" : "down"}">${sold ? "SOLD " : ""}${esc(tp.state.symbol)} ${c.strike} ${c.type}</b> <span class="dim">exp ${esc(c.expiry)} · ${c.source === "real" ? "real price" : "model"}</span><br>
+        ${p.qty} @ ₹${fmtPrice(p.entry)} → ₹${fmtPrice(mark)} <span class="${u >= 0 ? "up" : "down"}">${u >= 0 ? "+" : ""}₹${fmtPrice(u, 0)} (${fmtPrice((mark - p.entry) * p.side)} pts)</span>${brackets}`;
     } else if (p) {
       $(".pt-pos").innerHTML = `<b class="${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "LONG" : "SHORT"} ${p.qty}</b> @ ${fmtPrice(p.entry)}
          <span class="${u >= 0 ? "up" : "down"}">${u >= 0 ? "+" : ""}₹${fmtPrice(u, 0)} (${fmtPrice((mark - p.entry) * p.side)} pts)</span>${brackets}`;
