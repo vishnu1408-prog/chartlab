@@ -78,12 +78,12 @@
       return;
     }
     $("pos").innerHTML = `<tr><th>Stock</th><th class="n">Qty</th><th class="n">Entry</th><th>Since</th><th class="n">Price</th>
-      <th class="n">P&amp;L</th><th class="n">Stop (close)</th><th class="n">Target (opt.)</th><th class="n">Day</th><th>Status</th></tr>` +
+      <th class="n">P&amp;L</th><th class="n">Stop (close, trails)</th><th class="n">Target (close)</th><th class="n">Day</th><th>Status</th></tr>` +
       P.map((p) => {
         const px = p.ltp ?? p.last ?? p.entry, ret = px / p.entry - 1;
         const st = p.exit_due ? `<b class="down">sell at next open — ${esc(p.exit_due)}</b>`
           : p.below_stop_now ? `<b class="warn">below stop now — sell only if it CLOSES below ${num(p.stop)}</b>`
-          : p.target_hit ? `<span class="warn">above +25%</span>` : "holding";
+          : p.trailing ? `<span class="up">holding · stop trailing (profit locked)</span>` : "holding";
         return `<tr><td class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</td><td class="n">${p.qty}</td><td class="n">${num(p.entry)}</td>
         <td>${esc(p.entry_day)}</td><td class="n">${num(px)}${p.ltp != null ? ' <span class="up">●</span>' : ""}</td>
         <td class="n ${cls(ret)}">${pct(ret)} · ${rs(p.qty * (px - p.entry))}</td>
@@ -136,8 +136,9 @@
     $("rules").innerHTML = `Every Friday after the close, the ${r.universe} most-traded NSE stocks are ranked by a machine-learning model on
       19 price and volume measures. The ${r.new_per_week} best-ranked stocks you don't already hold are bought at Monday's open (at most
       ${r.slots} stocks, ₹${(r.capital / r.slots).toLocaleString("en-IN")} each). Each is sold at the next open after ${r.hold_days} trading days,
-      or after a day closes ${Math.round(100 * r.stop)}% below the entry. +${Math.round(100 * r.target)}% is only an optional booking level (tested: about the
-      same result as holding). Costs ${(200 * r.cost_side).toFixed(1)}% per round trip. Long only, delivery — no leverage, no F&amp;O.
+      after a day closes ${Math.round(100 * r.stop)}% below the entry, or after a day closes ${Math.round(100 * r.target)}% above it (target —
+      tested: about the same result as holding). Once a day closes 10% above the entry, the stop moves up to breakeven and then trails
+      10% below the highest close (never down). Costs ${(200 * r.cost_side).toFixed(1)}% per round trip. Long only, delivery — no leverage, no F&amp;O.
       The reasons shown are the measures that raise the model's score the most for that stock (each compared with the median stock).`;
     if (!eqChart && window.LightweightCharts) {
       eqChart = LightweightCharts.createChart($("eq"), { autoSize: true, layout: { background: { color: "transparent" }, textColor: "#787b86" },
@@ -189,7 +190,7 @@
                               : `No intraday candles yet: market closed, Angel One not connected, or Angel is busy (it retries every 30 s). The daily chart still works.`;
     }
     const pos = d.position, pend = d.pending, rank = d.rank;
-    const lv = pos ? [["Entry", pos.entry, "#d1d4dc"], ["Stop (close) −10%", pos.stop, "#ef5350"], ["Target +25% (optional)", pos.target, "#26a69a"]]
+    const lv = pos ? [["Entry", pos.entry, "#d1d4dc"], ["Stop (close) −10%", pos.stop, "#ef5350"], ["Target (close) +25%", pos.target, "#26a69a"]]
       : pend ? [["Buy ≈ next open (last close)", pend.close, "#d1d4dc"], ["Stop −10%", pend.close * 0.9, "#ef5350"], ["Target +25%", pend.close * 1.25, "#26a69a"]]
       : rank ? [["Stop if bought at close −10%", rank.stop, "#ef535099"], ["Target +25%", rank.target, "#26a69a99"]] : [];
     lv.forEach(([t, p, c]) => cs.createPriceLine({ price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: t }));

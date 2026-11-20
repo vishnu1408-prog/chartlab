@@ -4,8 +4,10 @@ Research (indicators/tests/swing_data.py, swing_model.py, 2026-10-15): every Fri
 ranked by a gradient-boosting model on 19 price / volume features (each as a percentile among the 300); target =
 next-4-week return rank. Walk-forward 2014–2026: rank-IC +0.07, positive 12 of 13 years, weaker since 2022.
 Plan chosen on 2014–21 only: each Friday buy the 2 best-ranked stocks not held (max 8, equal ₹ size) at Monday's
-open; sell at the open after 30 trading days (~6 weeks) or the open after a close ≤ entry − 10 %. Profit target:
-none in the rule (+25 % is shown as an optional booking level — tested ≈ the same). Costs 0.35 % per side.
+open; sell at the open after 30 trading days (~6 weeks), the open after a close ≤ entry − 10 %, or (user's choice,
+20 Nov 2026) the open after a close ≥ entry + 25 % (target — tested ≈ the same as holding). Trailing stop (20 Nov
+2026): from a close ≥ +10 %, stop = max(breakeven, highest close − 10 %); 2014-21 +25 %/yr vs +22 %, 2022-26 +19.5 %
+vs +17 % (data/swing_research/swing_trail.py). Costs 0.35 % per side.
 Backtest 2022 → Oct 2026: +10 %/yr, max drawdown −41 %, 2024 −10 %, 2025 −8 % ≈ NIFTY 500 (+8 %) → weak edge.
 
 Data: NSE CM bhavcopy (every stock, daily, published ~18:00–19:00 IST) + corporate actions from the PR archive.
@@ -34,6 +36,7 @@ from . import config
 log = logging.getLogger("chartlab.swing")
 DIR = config.DATA_DIR / "swing"
 UNIVERSE, K_NEW, SLOTS, HOLD, STOP, TARGET, COST = 300, 2, 8, 30, 0.10, 0.25, 0.0035
+TRAIL_ACT, TRAIL_DIST = 0.10, 0.10            # trailing stop: active from +10 % (closing basis), 10 % below highest close
 CAPITAL = 150_000
 H_FWD = 20
 WORK_DAYS = 420
@@ -403,8 +406,9 @@ def step_portfolio(s: dict, W: dict, d: pd.Timestamp, fac: dict):
 
     for p in s["positions"]:                       # corporate action today → keep entry / stop in today's terms
         if p["sym"] in fac:
-            for k in ("entry", "stop", "target"):
-                p[k] = round(p[k] * fac[p["sym"]], 2)
+            for k in ("entry", "stop", "target", "hc"):
+                if p.get(k) is not None:
+                    p[k] = round(p[k] * fac[p["sym"]], 2)
             p["qty"] = int(round(p["qty"] / fac[p["sym"]]))
     # 1) exits decided yesterday fill at today's open
     still = []
@@ -433,7 +437,7 @@ def step_portfolio(s: dict, W: dict, d: pd.Timestamp, fac: dict):
                                    "stop": round(o * (1 - STOP), 2), "target": round(o * (1 + TARGET), 2),
                                    "days": 0, "reason": q.get("reason", ""), "score": q.get("score")})
             _event(s, "BOUGHT", q["sym"], f"Paper-bought {qty} × {q['sym']} at {o:.2f}; stop {o * (1 - STOP):.2f} (−10% on "
-                                          f"a closing basis), optional target {o * (1 + TARGET):.2f}, time exit after "
+                                          f"a closing basis), target {o * (1 + TARGET):.2f}, time exit after "
                                           f"{HOLD} trading days", d.date())
         s["pending"] = []
     # 3) end of day: mark and flag exits for tomorrow's open
@@ -446,19 +450,29 @@ def step_portfolio(s: dict, W: dict, d: pd.Timestamp, fac: dict):
         p["ret"] = round(c / p["entry"] - 1, 4)
         if p.get("exit_due"):
             continue
+        # trailing stop (user's rule, 20 Nov 2026; tested in data/swing_research/swing_trail.py): once a close is
+        # ≥ entry + 10 %, the stop rises to max(breakeven after costs, highest close − 10 %) and never moves down
+        p["hc"] = round(max(p.get("hc") or p["entry"], c), 2)   # highest close since entry (from the rule's start)
+        if p["hc"] >= p["entry"] * (1 + TRAIL_ACT):
+            new = round(max(p["entry"] * (1 + 2 * COST), p["hc"] * (1 - TRAIL_DIST)), 2)
+            if new > p["stop"]:
+                if not p.get("trailing"):
+                    _event(s, "TRAIL", p["sym"], f"{p['sym']} is up {100 * (c / p['entry'] - 1):.0f}% — stop raised to "
+                                                 f"{new:.2f} (no loss possible on a close below it)", d.date())
+                p["stop"], p["trailing"] = new, True
         if c <= p["stop"]:
-            p["exit_due"] = "stop −10%"
+            p["exit_due"] = "trailing stop" if p.get("trailing") else "stop −10%"
             _event(s, "SELL", p["sym"], f"SELL {p['sym']} at tomorrow's open — closed at {c:.2f}, below the stop "
                                         f"{p['stop']:.2f}", d.date())
         elif p["days"] >= HOLD:
             p["exit_due"] = f"{HOLD} days done"
             _event(s, "SELL", p["sym"], f"SELL {p['sym']} at tomorrow's open — {HOLD} trading days (~6 weeks) are up; "
                                         f"now {100 * p['ret']:+.1f}%", d.date())
-        elif c >= p["target"] and not p.get("target_hit"):
+        elif c >= p["target"]:                      # user's rule (20 Nov 2026): book at the +25 % target
             p["target_hit"] = True
-            _event(s, "TARGET", p["sym"], f"{p['sym']} closed at {c:.2f}, above the optional +25% level "
-                                          f"{p['target']:.2f}. The tested rule keeps holding; booking here is also fine.",
-                   d.date())
+            p["exit_due"] = "target +25%"
+            _event(s, "SELL", p["sym"], f"SELL {p['sym']} at tomorrow's open — closed at {c:.2f}, at / above the "
+                                        f"+25% target {p['target']:.2f}", d.date())
 
 
 def rank_day(W, F, M, medv, n250, d) -> dict | None:
@@ -543,7 +557,7 @@ def _update(force_rank: bool) -> dict:
             for r in buys:
                 _event(s, "BUY", r["sym"], f"BUY {r['sym']} at Monday's open (Friday close {r['close']:.2f}); about "
                                            f"{r['qty']} shares for ₹{CAPITAL // SLOTS:,}. Stop {r['stop']:.2f} "
-                                           f"(close below → sell), optional target {r['target']:.2f}, hold up to 6 weeks. "
+                                           f"(close below → sell), target {r['target']:.2f}, hold up to 6 weeks. "
                                            f"Why: {r['reason']}", d.date())
             if not buys:
                 _event(s, "INFO", "-", "No new buys this week (all 8 slots are full).", d.date())
@@ -670,7 +684,7 @@ def kickstart() -> dict:
                                    "reason": r["reason"], "score": r["score"], "entry_note": f"start-up buy at live price {now:%H:%M}"})
             _event(s, "BOUGHT", r["sym"], f"Paper-bought {qty} × {r['sym']} at the live price {o:.2f} ({now:%H:%M}) to start "
                                           f"the portfolio (rank #{r['rank']} on {pk['day']}). Stop {o * (1 - STOP):.2f} on a "
-                                          f"closing basis, optional target {o * (1 + TARGET):.2f}, time exit after {HOLD} "
+                                          f"closing basis, target {o * (1 + TARGET):.2f}, time exit after {HOLD} "
                                           f"trading days. Why: {r['reason']}", now.date())
         s["live_from"] = str(now.date())
         _write_state(s)

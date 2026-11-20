@@ -147,3 +147,16 @@ def test_watch_close_warns_once_when_below_stop(monkeypatch):
     ev = swing._read_state()["events"]
     assert [e["sym"] for e in ev] == ["AAA"] and ev[0]["kind"] == "WATCH"
     __import__("app.db").db.swing_clear()
+
+
+def test_trailing_stop_locks_profit():
+    days = pd.bdate_range("2026-03-02", periods=12)
+    closes = [100, 100, 105, 112, 120, 118, 109, 107, 106, 105, 104, 103]       # +20 % then a fall
+    W = _wide(days, [(c, c) for c in closes])
+    s = {"live_from": None, "positions": [], "pending": [{"sym": "AAA", "score": 0.1, "reason": "x", "close": 100}],
+         "closed": [], "events": [], "decided": []}
+    for d in days:
+        swing.step_portfolio(s, W, d, {})
+    tr = s["closed"][0]
+    assert tr["exit_due"] == "trailing stop"                                    # 120 → stop 108; close 107 → sell
+    assert tr["exit"] >= 100                                                    # no loss once trailing
