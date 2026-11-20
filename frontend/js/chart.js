@@ -286,6 +286,21 @@ export class ChartView {
     const maxv = Math.max(1e-9, ...rows.map((r) => Math.max(r[1], r[2])));
     const fmt = (v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v >= 100 ? Math.round(v).toString()
       : v >= 10 ? v.toFixed(1) : v > 0 ? v.toFixed(2) : "0");
+    if (s.approx) {                                                 // volume at price only (no buy/sell split)
+      rows.forEach(([p, vol]) => {
+        const y = this.priceToY(p + L);
+        if (y == null) return;
+        if (numbers) { ctx.fillStyle = "rgba(19,23,34,0.88)"; ctx.fillRect(x - half, y, half * 2, h); }
+        ctx.fillStyle = `rgba(100,181,246,${(0.7 * vol / maxv).toFixed(3)})`;
+        ctx.fillRect(x - half, y, half * 2, h);
+        if (Math.abs(p - s.poc) < L / 2) { ctx.strokeStyle = "#ffeb3b"; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.strokeRect(x - half, y, half * 2, h); }
+        if (!numbers) return;
+        ctx.font = `${Math.max(8, Math.min(11, Math.floor(h - 1)))}px Inter, system-ui, sans-serif`;
+        ctx.textBaseline = "middle"; ctx.textAlign = "center"; ctx.fillStyle = "#b3d4f0";
+        ctx.fillText(fmt(vol), x, y + h / 2);
+      });
+      return;
+    }
     rows.forEach(([p, sell, buy], i) => {
       const y = this.priceToY(p + L);
       if (y == null) return;

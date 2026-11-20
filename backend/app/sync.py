@@ -6,7 +6,7 @@ import time
 
 import pandas as pd
 
-from . import config, sources, store, symbols
+from . import futvol, config, sources, store, symbols
 
 log = logging.getLogger("chartlab.sync")
 _last_sync: dict = {}
@@ -126,6 +126,8 @@ def sync_symbol(sym: str, force: bool = False) -> dict:
             start = max(last + pd.Timedelta(minutes=1), pd.Timestamp(now_ist()) - pd.Timedelta(days=20))
             added["angel_1m"] = store.save_ext(sym, sources.Angel.candles(sym, start.to_pydatetime(), now_ist()), "1")
         elif sources.Angel.available() and s.exchange in ("NSE", "BSE"):
+            if sym in futvol.ROOTS and not market_open(sym=sym):
+                futvol.backfill_async(sym)                       # index futures volume: history + today's top-up
             start = (last + pd.Timedelta(minutes=1)).to_pydatetime()
             new = sources.Angel.candles(sym, start, now_ist())
             added["angel_1m"] = store.save_ext(sym, new, "1")
@@ -173,7 +175,8 @@ def _angel_live(sym: str, t: dt.datetime, day_start: dt.datetime) -> pd.DataFram
     those the live quote (a separate, generous limit) folded into the current minute every poll."""
     st = _live.get(sym)
     if st is None or st["day"] != t.date():
-        st = _live[sym] = {"day": t.date(), "bars": store.empty(), "full_at": 0.0, "fix_at": 0.0, "vol": None}
+        st = _live[sym] = {"day": t.date(), "bars": store.empty(), "full_at": 0.0, "fix_at": 0.0, "vol": None,
+                           "fcum": None, "fvol": {}}
     now = time.time()
     cooling = sources.Angel.cooling()
     if not cooling and now - st["fix_at"] >= 60:
@@ -188,7 +191,21 @@ def _angel_live(sym: str, t: dt.datetime, day_start: dt.datetime) -> pd.DataFram
             st["bars"] = pd.concat([keep, d[["open", "high", "low", "close", "volume"]]]).sort_index()
     s = symbols.get(sym)
     tok = sources.Angel.token(sym)
-    q = sources.Angel.quotes({s.exchange: [tok]}, "FULL").get(str(tok)) if tok else None
+    futs = futvol.contracts(sym) if sym in futvol.ROOTS else []    # index: volume = all its futures (near+next+far)
+    want = {s.exchange: [tok]} if tok else {}
+    if futs:
+        want["NFO"] = [f[1] for f in futs]
+    qs = sources.Angel.quotes(want, "FULL") if want else {}
+    q = qs.get(str(tok)) if tok else None
+    fqs = [(qs.get(str(f[1])), f[3]) for f in futs]
+    fqs = [(x, lot) for x, lot in fqs if x and x.get("tradeVolume") is not None
+           and (quote_time(x) is None or quote_time(x).date() == t.date())]
+    if fqs and len(fqs) == len(futs):                            # all contracts quoted: no false jumps
+        cum = sum(float(x["tradeVolume"]) / max(lot, 1) for x, lot in fqs)   # shares → contracts (history unit)
+        if st["fcum"] is not None:
+            m = pd.Timestamp(t).floor("min")
+            st["fvol"][m] = st["fvol"].get(m, 0.0) + max(cum - st["fcum"], 0.0)
+        st["fcum"] = cum
     qt = quote_time(q)
     if q and qt is not None and qt.date() < t.date():
         q = None                                                 # stale (holiday / before the open): no fake bars
@@ -197,7 +214,11 @@ def _angel_live(sym: str, t: dt.datetime, day_start: dt.datetime) -> pd.DataFram
         dv = max(cum - st["vol"], 0) if st["vol"] is not None else 0
         st["vol"] = cum
         st["bars"] = _tick(st["bars"], t, float(q["ltp"]), float(dv))
-    return st["bars"].copy()
+    out = st["bars"].copy()
+    if st.get("fvol") and len(out):
+        fv = pd.Series(st["fvol"]).reindex(out.index)
+        out["volume"] = fv.where(fv.notna(), out["volume"])
+    return out
 
 
 def latest_minutes(sym: str) -> pd.DataFrame:

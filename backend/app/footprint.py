@@ -25,7 +25,7 @@ from . import config
 log = logging.getLogger("chartlab.footprint")
 DIR = config.DATA_DIR / "footprint"
 IST = dt.timedelta(hours=5, minutes=30)
-BIN = {"BTCUSD": 1.0}                                     # storage price level per symbol (display can be coarser)
+BIN = {"BTCUSD": 1.0, "NIFTY 50": 0.5}                                     # storage price level per symbol (display can be coarser)
 _lock = threading.Lock()
 
 

@@ -430,3 +430,11 @@ test("fib retracement drawing: default levels 0…4 continue past the start; hit
   assert.equal(hitTest("fib", pts, 300, 200, 400)?.part, "body");
   assert.equal(hitTest("fib", pts, 300, 30, 400), null);
 });
+
+
+test("visibleAt honours visible_until (withdrawn objects)", () => {
+  const objs = [{ visible_from: 0, visible_until: 10 }, { visible_from: 10 }];
+  assert.equal(visibleAt(objs, 5, true, 0).length, 1);      // only the first, not yet withdrawn
+  assert.equal(visibleAt(objs, 10, true, 0).length, 1);     // first withdrawn, second shown
+  assert.equal(visibleAt(objs, null, false).length, 1);     // live: withdrawn objects never shown
+});

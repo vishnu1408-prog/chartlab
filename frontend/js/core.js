@@ -88,8 +88,10 @@ export function cursorForTimeframe(times, endTime, tfSec) {
 /** Objects from indicators carry visible_from = start time of the bar at whose CLOSE they became known.
  *  `knownUntil` = end of the data revealed so far (seconds); null = show everything (normal / live chart). */
 export function visibleAt(objs, knownUntil, replay = true, tfSec = 0) {
-  if (knownUntil == null) return objs.filter((o) => !(o.live_only && replay));
-  return objs.filter((o) => (o.visible_from ?? o.time ?? 0) + tfSec <= knownUntil && !(replay && o.live_only));
+  // visible_until (optional) = start of the bar at whose CLOSE the object is withdrawn (e.g. an early swing cancelled)
+  if (knownUntil == null) return objs.filter((o) => !(o.live_only && replay) && o.visible_until == null);
+  return objs.filter((o) => (o.visible_from ?? o.time ?? 0) + tfSec <= knownUntil && !(replay && o.live_only)
+    && (o.visible_until == null || o.visible_until + tfSec > knownUntil));
 }
 
 /** Start time of the chart bar that contains time t, counted from the session start `anchor` (like the backend):

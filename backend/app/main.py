@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 import datetime as dt
 from pathlib import Path
 
-from . import analytics, backtest, bots, chain, config, db, edge, events, flows, oi, harmonic_scan, news, options, opthist, paper, sources, store, strategy, swing, symbols, sync
+from . import analytics, backtest, bots, chain, config, db, edge, events, flows, oi, harmonic_scan, news, options, opthist, paper, sources, store, strategy, swing, symbols, sync, footprint_rec
 from .indicators import registry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -43,6 +43,7 @@ async def lifespan(_app):
         events.start()                           # economic calendar (ForexFactory, Fed) for chart markers
         flows.start()                            # FII / DII cash (NSE, evenings) + NSDL FPI
         oi.start()                               # NIFTY / SENSEX OI snapshots every 3 min (PCR, max pain)
+        footprint_rec.start()                    # NIFTY footprint: futures ticks (buy/sell estimate) 09:14–15:31
     yield
 
 
@@ -71,6 +72,11 @@ def _tf(tf: str):
 
 
 # ───────────────────────────── market data ─────────────────────────────
+@app.get("/api/footprint/status")
+def footprint_status():
+    return footprint_rec.status
+
+
 @app.get("/api/health")
 def health(symbol: str | None = None):
     s = symbols.all_symbols().get(symbol) if symbol else None

@@ -174,6 +174,8 @@ def save_ext(sym: str, new: pd.DataFrame, res: str = "1") -> int:
 def _ext_mtime(sym: str) -> float:
     """Cache key: changes whenever synced data (or downloaded MCX history) changes."""
     m = sum(ext_path(sym, r).stat().st_mtime for r in EXT_RES if ext_path(sym, r).exists())
+    from . import futvol
+    m += sum(f.stat().st_mtime for f in futvol.files(sym))          # index futures volume (NSE indices)
     s = symbols.all_symbols().get(sym)
     return m + (sum(f.stat().st_mtime for f in _angel_files(s)) if s is not None and s.exchange == "MCX" else 0)
 
@@ -188,10 +190,25 @@ def minute_bars(sym: str) -> pd.DataFrame:
             return hit[1]
     base, ext = load_base(sym), load_ext(sym, "1")
     df = _clean(pd.concat([base, ext]), se=sess(sym)) if len(ext) else base
+    df = _with_futvol(sym, df)
     with _lock:
         _cache[sym] = (key_mtime, df)
         while len(_cache) > _CACHE_MAX:
             _cache.popitem(last=False)
+    return df
+
+
+def _with_futvol(sym: str, df: pd.DataFrame) -> pd.DataFrame:
+    """NSE indices publish no volume: use the near-month future's volume (contracts) where it is stored."""
+    from . import futvol
+    if sym not in futvol.ROOTS or df.empty:
+        return df
+    fv = futvol.load(sym)
+    if fv.empty:
+        return df
+    v = fv.reindex(df.index)
+    df = df.copy()
+    df["volume"] = v.where(v.notna(), df["volume"]).astype("float64")
     return df
 
 

@@ -146,14 +146,17 @@ class Footprint(Indicator):
     params = [Param("level", "float", 0.0, "Price step (0 = auto)", 0.0, 100000, 0.05),
               Param("max_bars", "int", 150, "Candles with a footprint", 10, 600),
               Param("imbalance", "float", 3.0, "Imbalance ratio", 1.5, 10, 0.5),
-              Param("mode", "choice", "auto", "Show", options=["auto", "numbers", "heat"])]
+              Param("mode", "choice", "auto", "Show", options=["auto", "numbers", "heat"]),
+              Param("history", "bool", True, "NIFTY: volume-at-price (no buy/sell) on candles without a live recording")]
 
-    def compute(self, df, level, max_bars, imbalance, mode):
+    def compute(self, df, level, max_bars, imbalance, mode, history=True):
         from ... import footprint as fp
         sym = df.attrs.get("symbol")
         if df.empty:
             return Output()
-        if sym not in ("BTCUSD",) and not fp.has_data(sym):
+        from ... import futvol
+        approx_ok = history and sym in futvol.ROOTS and float(df.volume.sum()) > 0
+        if sym not in ("BTCUSD",) and not fp.has_data(sym) and not approx_ok:
             return Output(info={"note": "No footprint data for this market yet. BTC: real Binance trades. NIFTY "
                                         "futures / MCX: recorded live by ChartLab from the next session."})
         step = np.diff(df.index.values[-50:]).astype("timedelta64[m]").astype(int)
@@ -179,15 +182,58 @@ class Footprint(Indicator):
         shapes = [{"kind": "footprint", "time": tpos[b], "points": [{"time": tpos[b], "price": v["poc"]}],
                    "rows": v["rows"], "level": level, "delta": v["delta"], "poc": v["poc"], "imb": imbalance,
                    "mode": mode, "visible_from": tpos[b], "color": "#888"} for b, v in fc.items() if b in tpos]
+        n_real = len(shapes)
+        if approx_ok:                                     # candles with no recording: volume-at-price from 1-min bars
+            missing = [ts for ts in bars.index if ts not in fc]
+            if missing:
+                shapes += _vap_shapes(sym, missing, tf_min, level, tpos, mode)
         info = {"price step": f"{level:g}", "candles with data": f"{len(shapes)} of {len(bars)}"}
-        if shapes:
-            d = sum(s["delta"] for s in shapes)
+        if approx_ok:
+            info["buy/sell (live recording)"] = f"{n_real} candles — side estimated from bid/ask on Angel's tick feed"
+            info["volume at price only"] = (f"{len(shapes) - n_real} candles — 1-min futures volume spread over each "
+                                            "minute's range; no buy/sell split, no delta")
+        if n_real:
+            d = sum(s["delta"] for s in shapes[:n_real])
             info["delta (shown candles)"] = f"{d:+,.2f}"
         if note:
             info["source"] = note
         if not shapes:
             info["status"] = "loading trades… (first time can take ~1 minute)" if sym == "BTCUSD" else "no data yet"
         return Output(shapes=shapes, info=info)
+
+
+def _vap_shapes(sym, starts, tf_min, level, tpos, mode):
+    """Approximate volume-at-price per candle: each 1-minute bar's volume spread evenly over its high–low levels."""
+    from ... import store
+    m = store.minute_bars(sym)
+    a, z = min(starts), max(starts) + pd.Timedelta(minutes=tf_min)
+    m = m[(m.index >= a) & (m.index < z) & (m.volume > 0)]
+    if m.empty:
+        return []
+    st = pd.DatetimeIndex(sorted(starts))
+    pos = np.searchsorted(st.values, m.index.values, side="right") - 1
+    out = []
+    lo_l = np.floor(m.low.to_numpy() / level) * level
+    hi_l = np.floor(m.high.to_numpy() / level) * level
+    vol = m.volume.to_numpy()
+    acc = {}
+    for k in range(len(m)):
+        if pos[k] < 0 or (m.index[k] - st[pos[k]]) >= pd.Timedelta(minutes=tf_min):
+            continue
+        lv = np.arange(lo_l[k], hi_l[k] + level / 2, level)
+        d = acc.setdefault(st[pos[k]], {})
+        for x in lv:
+            x = round(float(x), 6)
+            d[x] = d.get(x, 0.0) + vol[k] / len(lv)
+    for b, d in acc.items():
+        if b not in tpos or not d:
+            continue
+        rows = sorted(([p, v, 0.0] for p, v in d.items()), key=lambda r: -r[0])
+        poc = max(rows, key=lambda r: r[1])[0]
+        out.append({"kind": "footprint", "approx": True, "time": tpos[b], "points": [{"time": tpos[b], "price": poc}],
+                    "rows": rows, "level": level, "delta": 0.0, "poc": poc, "imb": 99.0, "mode": mode,
+                    "visible_from": tpos[b], "color": "#888"})
+    return out
 
 
 INDICATORS = [SessionProfile(), VWAPBands(), Footprint()]
