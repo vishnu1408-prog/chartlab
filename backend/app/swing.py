@@ -638,7 +638,7 @@ def chart(sym: str) -> dict:
     return out
 
 
-_ltp_cache: dict = {"t": 0.0, "q": {}}
+_ltp_cache: dict = {"t": 0.0, "q": {}, "o": {}}
 
 
 def live_prices(syms: list) -> dict:
@@ -653,9 +653,10 @@ def live_prices(syms: list) -> dict:
         return {}
     if time.time() - _ltp_cache["t"] > 25 or not set(syms) <= set(_ltp_cache["q"]):
         toks = {sym: eq_token(sym) for sym in syms}
-        q = Angel.quotes({"NSE": [t_ for t_ in toks.values() if t_]}, "LTP")
-        _ltp_cache.update(t=time.time(), q={sym: float(q[str(tk)]["ltp"]) for sym, tk in toks.items()
-                                            if tk and str(tk) in q and q[str(tk)].get("ltp")})
+        q = Angel.quotes({"NSE": [t_ for t_ in toks.values() if t_]}, "OHLC")
+        ok = {sym: q[str(tk)] for sym, tk in toks.items() if tk and str(tk) in q and q[str(tk)].get("ltp")}
+        _ltp_cache.update(t=time.time(), q={sym: float(x["ltp"]) for sym, x in ok.items()},
+                          o={sym: float(x["open"]) for sym, x in ok.items() if x.get("open")})
     return {k: v for k, v in _ltp_cache["q"].items() if k in syms}
 
 
@@ -696,15 +697,47 @@ def snapshot() -> dict:
     s = _read_state()
     from . import db
     latest, official = db.pick_latest(), db.pick_latest(official=True)
+    try:
+        live = live_prices([p["sym"] for p in s["positions"]] + [q["sym"] for q in s["pending"]])
+    except Exception as e:
+        log.warning("swing live prices: %s", e)
+        live = {}
+    # Display only: exits / buys due "at the next open" have filled at TODAY's open; the portfolio records them in
+    # the evening run (official NSE open). Show the provisional fill from today's live quote meanwhile.
+    opens = {k: v for k, v in _ltp_cache.get("o", {}).items() if k in live}
+    for p in s["positions"]:
+        o = opens.get(p["sym"]) if p.get("exit_due") else None
+        if o:
+            p["filled_today"] = o
+            p["fill_ret"] = round(o / p["entry"] * (1 - COST) / (1 + COST) - 1, 4)
+            p["fill_pnl"] = round(p["qty"] * (o * (1 - COST) - p["entry"] * (1 + COST)))
+    for q in s["pending"]:
+        o = opens.get(q["sym"])
+        if o:
+            q["filled_today"] = o
+            q["fill_qty"] = max(1, int(CAPITAL / SLOTS // o))
+    from .sync import now_ist
+    today = str(now_ist().date())
+    for p in s["positions"]:                     # provisional rows / alerts, same ids as tonight's official ones
+        if p.get("filled_today"):
+            o = p["filled_today"]
+            s["closed"].append({**p, "exit": o, "exit_day": today, "ret": p["fill_ret"], "pnl": p["fill_pnl"],
+                                "provisional": True})
+            s["events"].append({"id": f"{today}-SOLD-{p['sym']}", "day": today, "kind": "SOLD", "sym": p["sym"],
+                                "text": f"Paper-sold {p['sym']} at today's open {o:.2f} ({p['exit_due']}): "
+                                        f"{100 * p['fill_ret']:+.1f}% after costs, ₹{p['fill_pnl']:+,.0f} "
+                                        f"(provisional — confirmed tonight with NSE's official open)"})
+    for q in s["pending"]:
+        if q.get("filled_today"):
+            o = q["filled_today"]
+            s["events"].append({"id": f"{today}-BOUGHT-{q['sym']}", "day": today, "kind": "BOUGHT", "sym": q["sym"],
+                                "text": f"Paper-bought {q['fill_qty']} × {q['sym']} at today's open {o:.2f}; stop "
+                                        f"{o * (1 - STOP):.2f} (−10% on a closing basis), target {o * (1 + TARGET):.2f}, "
+                                        f"time exit after {HOLD} trading days (provisional — confirmed tonight)"})
     cl = pd.DataFrame(s["closed"])
     tally = {"trades": len(cl)}
     if len(cl):
         tally.update(win=round(float((cl.ret > 0).mean()), 3), avg=round(float(cl.ret.mean()), 4), pnl=int(cl.pnl.sum()))
-    try:
-        live = live_prices([p["sym"] for p in s["positions"]])
-    except Exception as e:
-        log.warning("swing live prices: %s", e)
-        live = {}
     for p in s["positions"]:
         if p["sym"] in live:
             p["ltp"] = live[p["sym"]]

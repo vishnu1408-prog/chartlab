@@ -46,11 +46,17 @@
     const due = d.positions.filter((p) => p.exit_due);
     let h = "";
     if (d.pending.length) {
-      h += d.pending.map((p) => `<div class="ev"><span class="k BUY">BUY</span><span><b class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</b> at the next market open
+      h += d.pending.map((p) => p.filled_today ? `<div class="ev"><span class="k BUY">BOUGHT</span><span><b class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</b>
+        paper-bought at today's open <b>${num(p.filled_today)}</b> (about ${p.fill_qty} shares). Stop ${num(p.filled_today * 0.9)} on a closing basis,
+        target ${num(p.filled_today * 1.25)}. <span class="dim">Joins the table tonight, after NSE publishes today's prices (~18:00).</span></span></div>`
+        : `<div class="ev"><span class="k BUY">BUY</span><span><b class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</b> at the next market open
         (last close ${num(p.close)}). Stop: sell if a day <i>closes</i> below ${num(p.close * 0.9)} (−10%). Optional target
         ${num(p.close * 1.25)} (+25%). Hold up to 30 trading days (~6 weeks).<br><span class="dim">Why: ${esc(p.reason)}</span></span></div>`).join("");
     }
-    h += due.map((p) => `<div class="ev"><span class="k SELL">SELL</span><span><b class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</b> at the next market open — ${esc(p.exit_due)}
+    h += due.map((p) => p.filled_today ? `<div class="ev"><span class="k SELL">SOLD</span><span><b class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</b>
+      paper-sold at today's open <b>${num(p.filled_today)}</b> — ${esc(p.exit_due)}: <span class="${cls(p.fill_ret)}">${pct(p.fill_ret)} · ${rs(p.fill_pnl)}</span> after costs
+      (entry ${num(p.entry)}). <span class="dim">Moves to closed trades tonight (~18:00, official NSE open).</span></span></div>`
+      : `<div class="ev"><span class="k SELL">SELL</span><span><b class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</b> at the next market open — ${esc(p.exit_due)}
       (entry ${num(p.entry)}, last ${num(p.last)}, ${pct(p.ret)})</span></div>`).join("");
     h += recent.filter((e) => e.kind === "TARGET").map((e) => `<div class="ev"><span class="k TARGET">TARGET</span><span>${esc(e.text)}</span></div>`).join("");
     if (!h) {
@@ -80,8 +86,9 @@
     $("pos").innerHTML = `<tr><th>Stock</th><th class="n">Qty</th><th class="n">Entry</th><th>Since</th><th class="n">Price</th>
       <th class="n">P&amp;L</th><th class="n">Stop (close, trails)</th><th class="n">Target (close)</th><th class="n">Day</th><th>Status</th></tr>` +
       P.map((p) => {
-        const px = p.ltp ?? p.last ?? p.entry, ret = px / p.entry - 1;
-        const st = p.exit_due ? `<b class="down">sell at next open — ${esc(p.exit_due)}</b>`
+        const px = p.filled_today ?? p.ltp ?? p.last ?? p.entry, ret = px / p.entry - 1;
+        const st = p.filled_today ? `<b class="down">SOLD at today's open ${num(p.filled_today)} — ${esc(p.exit_due)}</b>`
+          : p.exit_due ? `<b class="down">sell at next open — ${esc(p.exit_due)}</b>`
           : p.below_stop_now ? `<b class="warn">below stop now — sell only if it CLOSES below ${num(p.stop)}</b>`
           : p.trailing ? `<span class="up">holding · stop trailing (profit locked)</span>` : "holding";
         return `<tr><td class="sym click" data-sym="${esc(p.sym)}">${esc(p.sym)}</td><td class="n">${p.qty}</td><td class="n">${num(p.entry)}</td>
@@ -119,7 +126,7 @@
     const C = [...d.closed].reverse();
     $("closed").innerHTML = C.length ? `<tr><th>Stock</th><th>In</th><th>Out</th><th class="n">Entry</th><th class="n">Exit</th><th class="n">Return</th><th>Why out</th></tr>` +
       C.map((c) => `<tr><td class="sym click" data-sym="${esc(c.sym)}">${esc(c.sym)}</td><td>${esc(c.entry_day)}</td><td>${esc(c.exit_day)}</td><td class="n">${num(c.entry)}</td>
-        <td class="n">${num(c.exit)}</td><td class="n ${cls(c.ret)}">${pct(c.ret)} · ${rs(c.pnl)}</td><td>${esc(c.exit_due)}</td></tr>`).join("") : "";
+        <td class="n">${num(c.exit)}</td><td class="n ${cls(c.ret)}">${pct(c.ret)} · ${rs(c.pnl)}</td><td>${esc(c.exit_due)}${c.provisional ? ' <span class="dim">(today, provisional)</span>' : ""}</td></tr>`).join("") : "";
   }
 
   function renderBacktest(d) {

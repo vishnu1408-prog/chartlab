@@ -64,7 +64,10 @@ def is_holiday(exchange: str, t: dt.datetime | None = None) -> bool:
         qt = quote_time(q)
         if qt is None:
             return False
-        closed = qt.date() < t.date()
+        # Angel sends feed heartbeats before the open even on holidays (24 Nov 2026: 06:40) → an update counts only if it
+        # is after today's scheduled open.
+        opened = dt.datetime.combine(t.date(), dt.time(OPEN_MIN[exchange] // 60, OPEN_MIN[exchange] % 60))
+        closed = qt < opened
         _holiday[key] = (time.time(), closed)
         if closed:
             log.info("%s holiday detected: last exchange update %s", exchange, qt)
